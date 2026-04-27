@@ -1,0 +1,10 @@
+# Dependencies (npm install 自动生成)
+node_modules/
+
+# Build outputs (npm run build 自动生成)
+dist/
+dist-electron/
+release/
+
+# macOS
+.DS_Store
