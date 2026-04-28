@@ -254,18 +254,54 @@ export default function App() {
   return (
     <div className="h-screen flex flex-col bg-white">
       {/* Title bar */}
-      <div className="h-12 shrink-0 bg-gray-100 border-b border-gray-200 flex items-center px-4 select-none">
-        <div className="flex items-center gap-3">
-          <svg className="w-6 h-6 text-blue-600" fill="currentColor" viewBox="0 0 24 24">
+      <div className="shrink-0 bg-gray-100 border-b border-gray-200 flex items-center px-4 select-none" style={{ height: 40 }}>
+        <div className="flex items-center gap-2">
+          <svg className="w-5 h-5 text-blue-600" fill="currentColor" viewBox="0 0 24 24">
             <path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8l-6-6z" />
             <path className="text-blue-300" d="M14 3v5h5M16 13H8M16 17H8M10 9H8" stroke="currentColor" strokeWidth={2} strokeLinecap="round" />
           </svg>
           <span className="text-sm font-semibold text-gray-700">MD Reader</span>
         </div>
+
         <div className="flex-1" />
+
+        {/* Search button */}
+        <button
+          onClick={() => setSearchVisible(!searchVisible)}
+          className={`flex items-center gap-1 px-2 py-1 rounded transition-colors text-xs ${searchVisible ? 'text-blue-600 bg-blue-50' : 'text-gray-500 hover:text-gray-700 hover:bg-gray-200'}`}
+          title="查找 (Cmd+F)"
+        >
+          <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+          </svg>
+        </button>
+
+        {/* View mode switch (only for markdown files) */}
+        {activeTab && isMarkdownFile(activeTab.path) && (
+          <div className="flex bg-gray-200 rounded-lg p-0.5 ml-1">
+            {['preview', 'markdown'].map(m => (
+              <button key={m} onClick={() => setTabViewMode(activeTabPath!, m as ViewMode)}
+                className={`px-2.5 py-0.5 text-xs font-medium rounded-md transition-colors ${activeTab.viewMode === m ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-600 hover:text-gray-900'}`}>
+                {m[0].toUpperCase() + m.slice(1)}
+              </button>
+            ))}
+          </div>
+        )}
+
+        {/* Language label for non-md files */}
+        {activeTab && !isMarkdownFile(activeTab.path) && (
+          <span className="ml-1 px-2 py-0.5 text-xs font-medium text-gray-500 bg-gray-200 rounded-md">
+            {getFileLanguageLabel(activeTab.path)}
+          </span>
+        )}
+
+        {/* Divider */}
+        <div className="w-px h-5 bg-gray-300 mx-2" />
+
+        {/* Open Folder button */}
         <button onClick={handleToolbarOpen}
-          className="flex items-center gap-1.5 px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white text-sm rounded-md transition-colors">
-          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          className="flex items-center gap-1.5 px-3 py-1 bg-blue-600 hover:bg-blue-700 text-white text-xs rounded-md transition-colors">
+          <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z" />
           </svg>
           Open Folder
@@ -331,39 +367,6 @@ export default function App() {
                 onClose={closeTab}
                 onCloseOthers={closeOtherTabs}
               />
-              <div className="h-10 shrink-0 border-b border-gray-200 flex items-center justify-between px-4 bg-gray-50">
-                <div className="flex items-center gap-2">
-                  <svg className={`w-4 h-4 flex-shrink-0 ${isMarkdownFile(activeTab.path) ? 'text-blue-500' : 'text-gray-500'}`} fill="currentColor" viewBox="0 0 20 20">
-                    <path fillRule="evenodd" d="M4 4a2 2 0 012-2h4.586A2 2 0 0112 2.586L15.414 6A2 2 0 0116 7.414V16a2 2 0 01-2 2H6a2 2 0 01-2-2V4z" clipRule="evenodd" />
-                  </svg>
-                  <span className="text-sm font-medium text-gray-700 truncate max-w-md">{activeTab.name}</span>
-                </div>
-                <div className="flex items-center gap-2">
-                  <button
-                    onClick={() => setSearchVisible(!searchVisible)}
-                    className={`p-1 rounded transition-colors ${searchVisible ? 'text-blue-600 bg-blue-50' : 'text-gray-500 hover:text-gray-700 hover:bg-gray-100'}`}
-                    title="查找 (Cmd+F)"
-                  >
-                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
-                    </svg>
-                  </button>
-                  {isMarkdownFile(activeTab.path) ? (
-                    <div className="flex bg-gray-200 rounded-lg p-0.5">
-                      {['preview', 'markdown'].map(m => (
-                        <button key={m} onClick={() => setTabViewMode(activeTabPath!, m as ViewMode)}
-                          className={`px-3 py-1 text-xs font-medium rounded-md transition-colors ${activeTab.viewMode === m ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-600 hover:text-gray-900'}`}>
-                          {m[0].toUpperCase() + m.slice(1)}
-                        </button>
-                      ))}
-                    </div>
-                  ) : (
-                    <span className="px-2.5 py-1 text-xs font-medium text-gray-500 bg-gray-200 rounded-md">
-                      {getFileLanguageLabel(activeTab.path)}
-                    </span>
-                  )}
-                </div>
-              </div>
               <SearchBar
                 visible={searchVisible}
                 onClose={() => { setSearchVisible(false); setSearchKeyword('') }}

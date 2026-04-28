@@ -44,40 +44,42 @@ export default function TabBar({ tabs, activePath, onSelect, onClose, onCloseOth
   if (tabs.length === 0) return null
 
   return (
-    <div className="flex items-center bg-gray-100 border-b border-gray-200 overflow-x-auto shrink-0" style={{ minHeight: 36 }}>
-      {tabs.map((tab) => {
-        const isActive = tab.path === activePath
-        return (
-          <div
-            key={tab.path}
-            className={`group flex items-center gap-1.5 px-3 py-1.5 text-xs cursor-pointer border-r border-gray-200 select-none whitespace-nowrap transition-colors ${
-              isActive
-                ? 'bg-white text-gray-900 font-medium border-b-2 border-b-blue-500'
-                : 'text-gray-600 hover:bg-gray-50 border-b-2 border-b-transparent'
-            }`}
-            onClick={() => onSelect(tab.path)}
-            onContextMenu={(e) => handleContextMenu(e, tab.path)}
-          >
-            <svg className="w-3.5 h-3.5 text-blue-500 flex-shrink-0" fill="currentColor" viewBox="0 0 20 20">
-              <path fillRule="evenodd" d="M4 4a2 2 0 012-2h4.586A2 2 0 0112 2.586L15.414 6A2 2 0 0116 7.414V16a2 2 0 01-2 2H6a2 2 0 01-2-2V4z" clipRule="evenodd" />
-            </svg>
-            <span className="truncate max-w-[140px]">{tab.name}</span>
-            {isActive && (
-              <button
-                className="ml-1 w-4 h-4 flex items-center justify-center rounded hover:bg-gray-200 text-gray-400 hover:text-gray-600 transition-colors"
-                onClick={(e) => {
-                  e.stopPropagation()
-                  onClose(tab.path)
-                }}
-              >
-                <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-                </svg>
-              </button>
-            )}
-          </div>
-        )
-      })}
+    <div className="bg-gray-100 border-b border-gray-200 shrink-0">
+      <div className="flex flex-wrap">
+        {tabs.map((tab) => {
+          const isActive = tab.path === activePath
+          return (
+            <div
+              key={tab.path}
+              className={`group flex items-center gap-1.5 px-3 py-1.5 text-xs cursor-pointer border-r border-gray-200 select-none whitespace-nowrap transition-colors ${
+                isActive
+                  ? 'bg-white text-gray-900 font-medium border-b-2 border-b-blue-500'
+                  : 'text-gray-600 hover:bg-gray-50 border-b-2 border-b-transparent'
+              }`}
+              onClick={() => onSelect(tab.path)}
+              onContextMenu={(e) => handleContextMenu(e, tab.path)}
+            >
+              <svg className="w-3.5 h-3.5 text-blue-500 flex-shrink-0" fill="currentColor" viewBox="0 0 20 20">
+                <path fillRule="evenodd" d="M4 4a2 2 0 012-2h4.586A2 2 0 0112 2.586L15.414 6A2 2 0 0116 7.414V16a2 2 0 01-2 2H6a2 2 0 01-2-2V4z" clipRule="evenodd" />
+              </svg>
+              <span className="truncate max-w-[140px]">{tab.name}</span>
+              {isActive && (
+                <button
+                  className="ml-1 w-4 h-4 flex items-center justify-center rounded hover:bg-gray-200 text-gray-400 hover:text-gray-600 transition-colors"
+                  onClick={(e) => {
+                    e.stopPropagation()
+                    onClose(tab.path)
+                  }}
+                >
+                  <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                  </svg>
+                </button>
+              )}
+            </div>
+          )
+        })}
+      </div>
 
       {/* Context Menu */}
       {contextMenu.visible && (
