@@ -5,6 +5,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
   selectFile:   () => ipcRenderer.invoke('select-file'),
   readFolder:   (p: string) => ipcRenderer.invoke('read-folder', p),
   readFile:     (p: string) => ipcRenderer.invoke('read-file', p),
+  checkFileExists: (p: string) => ipcRenderer.invoke('check-file-exists', p),
+  resolveFilePath: (basePath: string, relativePath: string) => ipcRenderer.invoke('resolve-file-path', basePath, relativePath),
 
   onMenuOpenFolder: (fn: (path: string) => void) => {
     const handler = (_e: Electron.IpcRendererEvent, path: string) => fn(path)

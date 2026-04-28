@@ -88,6 +88,10 @@
     @apply text-blue-600 hover:underline;
   }
 
+  .markdown-body .md-file-link {
+    @apply text-blue-600 hover:underline cursor-pointer font-medium bg-blue-50 px-0.5 rounded;
+  }
+
   .markdown-body table {
     @apply w-full border-collapse mb-4;
   }
