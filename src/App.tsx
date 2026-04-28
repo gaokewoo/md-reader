@@ -54,9 +54,14 @@ export default function App() {
   const [searchKeyword, setSearchKeyword] = useState('')
   const [matchCount, setMatchCount] = useState(0)
   const [currentMatchIndex, setCurrentMatchIndex] = useState(-1)
+  const [collapsedWorkspaces, setCollapsedWorkspaces] = useState<Set<string>>(new Set())
+  const [sidebarWidth, setSidebarWidth] = useState(288) // 288px = w-72
 
   const workspacesRef = useRef<Workspace[]>([])
   workspacesRef.current = workspaces
+
+  const isDragging = useRef(false)
+  const sidebarRef = useRef<HTMLDivElement>(null)
 
   const activeTab = tabs.find(t => t.path === activeTabPath) || null
 
@@ -251,6 +256,46 @@ export default function App() {
     await openFileTab(filePath)
   }, [openFileTab])
 
+  // ---- Workspace collapse ----
+
+  const toggleWorkspaceCollapse = useCallback((path: string) => {
+    setCollapsedWorkspaces(prev => {
+      const next = new Set(prev)
+      if (next.has(path)) next.delete(path)
+      else next.add(path)
+      return next
+    })
+  }, [])
+
+  // ---- Sidebar resize ----
+
+  const handleResizeStart = useCallback((e: React.MouseEvent) => {
+    e.preventDefault()
+    isDragging.current = true
+    const startX = e.clientX
+    const startWidth = sidebarWidth
+
+    const handleMouseMove = (ev: MouseEvent) => {
+      if (!isDragging.current) return
+      const diff = ev.clientX - startX
+      const newWidth = Math.max(180, Math.min(600, startWidth + diff))
+      setSidebarWidth(newWidth)
+    }
+
+    const handleMouseUp = () => {
+      isDragging.current = false
+      document.removeEventListener('mousemove', handleMouseMove)
+      document.removeEventListener('mouseup', handleMouseUp)
+      document.body.style.cursor = ''
+      document.body.style.userSelect = ''
+    }
+
+    document.body.style.cursor = 'col-resize'
+    document.body.style.userSelect = 'none'
+    document.addEventListener('mousemove', handleMouseMove)
+    document.addEventListener('mouseup', handleMouseUp)
+  }, [sidebarWidth])
+
   return (
     <div className="h-screen flex flex-col bg-white">
       {/* Title bar */}
@@ -311,28 +356,25 @@ export default function App() {
       {/* Content area */}
       <div className="flex-1 flex overflow-hidden">
         {/* Sidebar */}
-        <div className="w-72 shrink-0 bg-gray-50 border-r border-gray-200 flex flex-col">
+        <div
+          ref={sidebarRef}
+          className="shrink-0 bg-gray-50 border-r border-gray-200 flex flex-col"
+          style={{ width: sidebarWidth }}
+        >
           <div className="flex-1 overflow-auto">
             {workspaces.length > 0 ? (
               workspaces.map((ws) => (
-                <div key={ws.path} className="border-b border-gray-200 last:border-b-0">
-                  <div className="flex items-center px-2 py-1.5 bg-gray-100 border-b border-gray-200 group">
-                    <svg className="w-3.5 h-3.5 text-yellow-500 mr-1.5 flex-shrink-0" fill="currentColor" viewBox="0 0 20 20">
-                      <path d="M2 6a2 2 0 012-2h5l2 2h5a2 2 0 012 2v6a2 2 0 01-2 2H4a2 2 0 01-2-2V6z" />
-                    </svg>
-                    <span className="text-xs font-medium text-gray-600 truncate flex-1" title={ws.path}>{ws.name}</span>
-                    <button
-                      className="w-5 h-5 flex items-center justify-center rounded hover:bg-gray-200 text-gray-400 hover:text-gray-600 opacity-0 group-hover:opacity-100 transition-opacity"
-                      onClick={() => removeWorkspace(ws.path)}
-                      title="移除文件夹"
-                    >
-                      <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-                      </svg>
-                    </button>
-                  </div>
-                  <FileTree nodes={ws.tree} selectedPath={activeTabPath} onSelect={handleTreeSelect} />
-                </div>
+                <FileTree
+                  key={ws.path}
+                  nodes={ws.tree}
+                  selectedPath={activeTabPath}
+                  onSelect={handleTreeSelect}
+                  collapsed={collapsedWorkspaces.has(ws.path)}
+                  onToggleCollapse={() => toggleWorkspaceCollapse(ws.path)}
+                  workspaceName={ws.name}
+                  workspacePath={ws.path}
+                  onRemoveWorkspace={() => removeWorkspace(ws.path)}
+                />
               ))
             ) : loading ? (
               <div className="flex items-center justify-center h-32">
@@ -354,6 +396,14 @@ export default function App() {
               </div>
             )}
           </div>
+        </div>
+
+        {/* Resize handle */}
+        <div
+          className="w-1 shrink-0 cursor-col-resize hover:bg-blue-400 active:bg-blue-500 transition-colors relative group"
+          onMouseDown={handleResizeStart}
+        >
+          <div className="absolute inset-y-0 -left-1 -right-1" />
         </div>
 
         {/* Viewer */}

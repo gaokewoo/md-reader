@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useCallback } from 'react'
 
 export interface FileNode {
   name: string
@@ -11,46 +11,40 @@ interface FileTreeProps {
   nodes: FileNode[]
   selectedPath: string | null
   onSelect: (path: string, type: 'file' | 'directory') => void
-  level?: number
+  collapsed?: boolean
+  onToggleCollapse?: () => void
+  onCollapseAll?: () => void
+  workspaceName?: string
+  workspacePath?: string
+  onRemoveWorkspace?: () => void
 }
 
 // Color map based on file extension
 function getFileIconColor(name: string): string {
   const ext = name.includes('.') ? name.split('.').pop()!.toLowerCase() : ''
-  // No extension or special filenames
   const noExtNames = ['Makefile', 'Dockerfile', 'Vagrantfile', 'Gemfile', 'Rakefile',
     'Procfile', 'Brewfile', 'Podfile', 'Fastfile']
   if (noExtNames.includes(name)) return 'text-green-600'
 
   const colorMap: Record<string, string> = {
-    // Markdown & docs
     md: 'text-blue-500', markdown: 'text-blue-500', txt: 'text-gray-500', text: 'text-gray-500',
     rst: 'text-blue-500', adoc: 'text-blue-500', org: 'text-blue-500', tex: 'text-green-600',
-    // Data & config
     json: 'text-yellow-600', yaml: 'text-orange-500', yml: 'text-orange-500', toml: 'text-orange-500',
     xml: 'text-orange-500', csv: 'text-green-600', tsv: 'text-green-600',
     ini: 'text-gray-600', cfg: 'text-gray-600', conf: 'text-gray-600', env: 'text-yellow-700', properties: 'text-gray-600',
-    // Logs
     log: 'text-gray-400',
-    // Web
     html: 'text-orange-600', htm: 'text-orange-600', css: 'text-blue-400', scss: 'text-pink-500',
     less: 'text-blue-400', sass: 'text-pink-500', vue: 'text-green-500', svelte: 'text-orange-500',
-    // JS / TS
     js: 'text-yellow-500', jsx: 'text-yellow-500', ts: 'text-blue-600', tsx: 'text-blue-600',
     mjs: 'text-yellow-500', cjs: 'text-yellow-500',
-    // Programming
     py: 'text-green-500', rb: 'text-red-500', go: 'text-cyan-500', rs: 'text-orange-600',
     java: 'text-red-600', c: 'text-blue-700', cpp: 'text-blue-700', h: 'text-purple-600', hpp: 'text-purple-600',
     cs: 'text-green-600', swift: 'text-orange-500', kt: 'text-purple-500', scala: 'text-red-400',
     lua: 'text-blue-500', r: 'text-blue-400', pl: 'text-blue-500', pm: 'text-blue-500', php: 'text-purple-600',
-    // Shell
     sh: 'text-green-500', bash: 'text-green-500', zsh: 'text-green-500', fish: 'text-green-500',
     ps1: 'text-blue-500', bat: 'text-green-500', cmd: 'text-green-500',
-    // Database
     sql: 'text-blue-500', graphql: 'text-pink-500', proto: 'text-blue-400',
-    // Diff
     diff: 'text-purple-500', patch: 'text-purple-500',
-    // Other
     dockerfile: 'text-blue-400', makefile: 'text-green-600', cmake: 'text-green-600', gradle: 'text-green-600',
   }
   return colorMap[ext] || 'text-gray-500'
@@ -76,16 +70,40 @@ function FileIcon({ type, isOpen, name }: { type: 'file' | 'directory'; isOpen?:
   )
 }
 
-function TreeNode({ node, selectedPath, onSelect, level = 0 }: FileTreeProps & { node: FileNode }) {
-  const [isOpen, setIsOpen] = useState(true)
+// Collect all directory paths in a tree for "collapse all"
+function collectDirPaths(nodes: FileNode[]): string[] {
+  const paths: string[] = []
+  for (const node of nodes) {
+    if (node.type === 'directory') {
+      paths.push(node.path)
+      if (node.children) paths.push(...collectDirPaths(node.children))
+    }
+  }
+  return paths
+}
+
+interface TreeNodeProps {
+  node: FileNode
+  selectedPath: string | null
+  onSelect: (path: string, type: 'file' | 'directory') => void
+  level?: number
+  collapsedDirs: Set<string>
+  onToggleDir: (path: string) => void
+}
+
+function TreeNode({ node, selectedPath, onSelect, level = 0, collapsedDirs, onToggleDir }: TreeNodeProps) {
   const isSelected = selectedPath === node.path
   const hasChildren = node.children && node.children.length > 0
+  const isOpen = !collapsedDirs.has(node.path)
 
-  const handleClick = () => {
-    if (node.type === 'directory' && hasChildren) {
-      setIsOpen(!isOpen)
+  const handleClick = (e: React.MouseEvent) => {
+    e.stopPropagation()
+    if (node.type === 'directory') {
+      onToggleDir(node.path)
     }
-    onSelect(node.path, node.type)
+    if (node.type === 'file') {
+      onSelect(node.path, node.type)
+    }
   }
 
   return (
@@ -121,10 +139,11 @@ function TreeNode({ node, selectedPath, onSelect, level = 0 }: FileTreeProps & {
             <TreeNode
               key={child.path}
               node={child}
-              nodes={[]}
               selectedPath={selectedPath}
               onSelect={onSelect}
               level={level + 1}
+              collapsedDirs={collapsedDirs}
+              onToggleDir={onToggleDir}
             />
           ))}
         </div>
@@ -133,18 +152,104 @@ function TreeNode({ node, selectedPath, onSelect, level = 0 }: FileTreeProps & {
   )
 }
 
-export default function FileTree({ nodes, selectedPath, onSelect }: FileTreeProps) {
+export default function FileTree({ nodes, selectedPath, onSelect, collapsed, onToggleCollapse, onCollapseAll, workspaceName, workspacePath, onRemoveWorkspace }: FileTreeProps) {
+  const [collapsedDirs, setCollapsedDirs] = useState<Set<string>>(new Set())
+
+  const handleToggleDir = useCallback((path: string) => {
+    setCollapsedDirs(prev => {
+      const next = new Set(prev)
+      if (next.has(path)) next.delete(path)
+      else next.add(path)
+      return next
+    })
+  }, [])
+
+  const handleCollapseAll = useCallback(() => {
+    const allDirs = collectDirPaths(nodes)
+    setCollapsedDirs(new Set(allDirs))
+    onCollapseAll?.()
+  }, [nodes, onCollapseAll])
+
+  const handleExpandAll = useCallback(() => {
+    setCollapsedDirs(new Set())
+  }, [])
+
+  const isCollapsed = collapsed ?? false
+
   return (
-    <div className="py-2">
-      {nodes.map((node) => (
-        <TreeNode
-          key={node.path}
-          node={node}
-          nodes={[]}
-          selectedPath={selectedPath}
-          onSelect={onSelect}
-        />
-      ))}
+    <div className="border-b border-gray-200 last:border-b-0">
+      {/* Workspace header */}
+      <div className="flex items-center px-2 py-1.5 bg-gray-100 border-b border-gray-200 group">
+        {/* Collapse/expand chevron for workspace */}
+        <button
+          className="w-4 h-4 flex items-center justify-center mr-1 rounded hover:bg-gray-200 text-gray-400 hover:text-gray-600 flex-shrink-0"
+          onClick={onToggleCollapse}
+          title={isCollapsed ? '展开' : '折叠'}
+        >
+          <svg
+            className={`w-3 h-3 transition-transform ${isCollapsed ? '' : 'rotate-90'}`}
+            fill="currentColor"
+            viewBox="0 0 20 20"
+          >
+            <path fillRule="evenodd" d="M7.293 14.707a1 1 0 010-1.414L10.586 10 7.293 6.707a1 1 0 011.414-1.414l4 4a1 1 0 010 1.414l-4 4a1 1 0 01-1.414 0z" clipRule="evenodd" />
+          </svg>
+        </button>
+        <svg className="w-3.5 h-3.5 text-yellow-500 mr-1.5 flex-shrink-0" fill="currentColor" viewBox="0 0 20 20">
+          <path d="M2 6a2 2 0 012-2h5l2 2h5a2 2 0 012 2v6a2 2 0 01-2 2H4a2 2 0 01-2-2V6z" />
+        </svg>
+        <span className="text-xs font-medium text-gray-600 truncate flex-1" title={workspacePath}>{workspaceName}</span>
+        {/* Collapse all / Expand all buttons */}
+        {!isCollapsed && (
+          <div className="flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
+            <button
+              className="w-5 h-5 flex items-center justify-center rounded hover:bg-gray-200 text-gray-400 hover:text-gray-600"
+              onClick={handleCollapseAll}
+              title="全部折叠"
+            >
+              <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+              </svg>
+            </button>
+            <button
+              className="w-5 h-5 flex items-center justify-center rounded hover:bg-gray-200 text-gray-400 hover:text-gray-600"
+              onClick={handleExpandAll}
+              title="全部展开"
+            >
+              <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 15l7-7 7 7" />
+              </svg>
+            </button>
+          </div>
+        )}
+        {/* Remove workspace */}
+        {onRemoveWorkspace && (
+          <button
+            className="w-5 h-5 flex items-center justify-center rounded hover:bg-gray-200 text-gray-400 hover:text-gray-600 opacity-0 group-hover:opacity-100 transition-opacity ml-0.5"
+            onClick={onRemoveWorkspace}
+            title="移除文件夹"
+          >
+            <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+            </svg>
+          </button>
+        )}
+      </div>
+      {/* Tree content */}
+      {!isCollapsed && (
+        <div className="py-1">
+          {nodes.map((node) => (
+            <TreeNode
+              key={node.path}
+              node={node}
+              selectedPath={selectedPath}
+              onSelect={onSelect}
+              level={0}
+              collapsedDirs={collapsedDirs}
+              onToggleDir={handleToggleDir}
+            />
+          ))}
+        </div>
+      )}
     </div>
   )
 }
