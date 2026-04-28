@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef } from 'react'
+import { useEffect, useMemo, useRef, useCallback } from 'react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import rehypeHighlight from 'rehype-highlight'
@@ -11,10 +11,10 @@ interface MarkdownViewerProps {
   currentFilePath: string | null
   onFileLinkClick: (filePath: string) => void
   searchKeyword?: string
-  currentMatchPos?: number
+  currentMatchIndex?: number  // 0-based index into the matches array
+  onMatchCountChange?: (count: number) => void
 }
 
-// Check if a string looks like a file path to a markdown document
 const MD_PATH_PATTERN = /[\w\-](?:[\w\-./]*\/[\w\-./]+\.(?:md|markdown))/i
 
 function isMdFilePath(text: string): boolean {
@@ -62,46 +62,80 @@ function FileLinkIcon() {
   )
 }
 
-// Highlight search keyword in text content
-function highlightSearchInText(text: string, keyword: string, currentMatchPos: number): React.ReactNode[] {
-  if (!keyword) return [text]
-  const parts: React.ReactNode[] = []
-  const lowerText = text.toLowerCase()
-  const lowerKeyword = keyword.toLowerCase()
-  let lastIndex = 0
-  let globalIdx = 0
-
-  let pos = lowerText.indexOf(lowerKeyword)
-  while (pos !== -1) {
-    if (pos > lastIndex) {
-      parts.push(text.slice(lastIndex, pos))
+// DOM-based search highlight: find text nodes and wrap matches with <mark>
+function applySearchHighlights(container: HTMLElement, keyword: string): number {
+  // First, remove any existing highlights
+  const existingMarks = container.querySelectorAll('mark.search-highlight')
+  for (const mark of existingMarks) {
+    const parent = mark.parentNode
+    if (parent) {
+      parent.replaceChild(document.createTextNode(mark.textContent || ''), mark)
+      parent.normalize() // Merge adjacent text nodes
     }
-    const isCurrent = currentMatchPos >= 0 && (
-      // Check if this match position is within the range of the current match
-      globalIdx >= currentMatchPos && globalIdx < currentMatchPos + keyword.length
-    )
-    // Actually, currentMatchPos is the character position in the full document.
-    // We need a different approach: pass an absolute offset tracker.
-    parts.push(
-      <mark key={`hl-${pos}-${lastIndex}`} className={`search-highlight ${isCurrent ? 'bg-orange-400 text-white' : 'bg-yellow-200'}`} data-pos={globalIdx}>
-        {text.slice(pos, pos + keyword.length)}
-      </mark>
-    )
-    lastIndex = pos + keyword.length
-    pos = lowerText.indexOf(lowerKeyword, lastIndex)
   }
 
-  if (lastIndex < text.length) {
-    parts.push(text.slice(lastIndex))
+  if (!keyword) return 0
+
+  const walker = document.createTreeWalker(container, NodeFilter.SHOW_TEXT)
+  const textNodes: Text[] = []
+  let node: Text | null
+  while ((node = walker.nextNode() as Text | null)) {
+    // Skip script/style nodes
+    if (node.parentElement?.tagName === 'SCRIPT' || node.parentElement?.tagName === 'STYLE') continue
+    if (node.textContent && node.textContent.toLowerCase().includes(keyword.toLowerCase())) {
+      textNodes.push(node)
+    }
   }
 
-  return parts.length > 0 ? parts : [text]
+  let matchCount = 0
+  const escaped = keyword.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+  const regex = new RegExp(`(${escaped})`, 'gi')
+
+  for (const textNode of textNodes) {
+    const text = textNode.textContent || ''
+    const parts = text.split(regex)
+    if (parts.length <= 1) continue
+
+    const fragment = document.createDocumentFragment()
+    for (const part of parts) {
+      if (regex.test(part)) {
+        const mark = document.createElement('mark')
+        mark.className = 'search-highlight'
+        mark.textContent = part
+        mark.setAttribute('data-match-index', String(matchCount))
+        fragment.appendChild(mark)
+        matchCount++
+      } else {
+        fragment.appendChild(document.createTextNode(part))
+      }
+    }
+
+    textNode.parentNode?.replaceChild(fragment, textNode)
+  }
+
+  return matchCount
 }
 
-export default function MarkdownViewer({ content, mode, currentFilePath, onFileLinkClick, searchKeyword, currentMatchPos }: MarkdownViewerProps) {
-  const isMd = isMarkdownFile(currentFilePath)
-  const viewerRef = useRef<HTMLDivElement>(null)
+// Scroll to a specific match and highlight it as current
+function scrollToMatch(container: HTMLElement, matchIndex: number) {
+  const marks = container.querySelectorAll('mark.search-highlight')
+  // Remove current highlight from all
+  marks.forEach(m => {
+    m.classList.remove('search-highlight-current')
+  })
 
+  if (matchIndex >= 0 && matchIndex < marks.length) {
+    const target = marks[matchIndex]
+    target.classList.add('search-highlight-current')
+    target.scrollIntoView({ behavior: 'smooth', block: 'center' })
+  }
+}
+
+export default function MarkdownViewer({ content, mode, currentFilePath, onFileLinkClick, searchKeyword, currentMatchIndex, onMatchCountChange }: MarkdownViewerProps) {
+  const isMd = isMarkdownFile(currentFilePath)
+  const containerRef = useRef<HTMLDivElement>(null)
+
+  // Scroll to top when content changes
   useEffect(() => {
     const container = document.getElementById('viewer-container')
     if (container) {
@@ -109,29 +143,30 @@ export default function MarkdownViewer({ content, mode, currentFilePath, onFileL
     }
   }, [content])
 
-  // Scroll to current match in markdown preview
-  useEffect(() => {
-    if (!searchKeyword || currentMatchPos === undefined || currentMatchPos < 0) return
-    const container = document.getElementById('viewer-container')
+  // Apply search highlights after DOM renders
+  const updateHighlights = useCallback(() => {
+    const container = containerRef.current
     if (!container) return
-    const marks = container.querySelectorAll('mark.search-highlight')
-    // Find the mark whose text content position matches
-    // Simpler: just scroll to the marks
-    if (marks.length > 0) {
-      // Try to find the "current" match - we use the data-pos attribute
-      for (const mark of marks) {
-        const pos = parseInt(mark.getAttribute('data-pos') || '0', 10)
-        if (pos >= currentMatchPos) {
-          mark.scrollIntoView({ behavior: 'smooth', block: 'center' })
-          // Also update its class to show as current
-          mark.classList.add('search-highlight-current')
-          mark.classList.remove('search-highlight')
-          mark.classList.add('search-highlight')
-          break
-        }
-      }
+
+    const count = applySearchHighlights(container, searchKeyword || '')
+    if (onMatchCountChange) {
+      onMatchCountChange(count)
     }
-  }, [currentMatchPos, searchKeyword])
+
+    // Apply current match highlight
+    if (currentMatchIndex !== undefined && currentMatchIndex >= 0) {
+      scrollToMatch(container, currentMatchIndex)
+    }
+  }, [searchKeyword, currentMatchIndex, onMatchCountChange])
+
+  // Re-apply highlights when search keyword or content changes
+  useEffect(() => {
+    // Use requestAnimationFrame to ensure DOM has been updated
+    const raf = requestAnimationFrame(() => {
+      updateHighlights()
+    })
+    return () => cancelAnimationFrame(raf)
+  }, [updateHighlights, content, mode])
 
   const handlePathClick = async (relativePath: string) => {
     if (!currentFilePath) return
@@ -142,24 +177,21 @@ export default function MarkdownViewer({ content, mode, currentFilePath, onFileL
     }
   }
 
-  // For non-markdown files, show plain text with search highlights
+  // For non-markdown files, show plain text with syntax highlighting
   if (!isMd) {
     return (
-      <PlainTextViewer
-        content={content}
-        filePath={currentFilePath}
-        searchKeyword={searchKeyword}
-        currentMatchPos={currentMatchPos}
-      />
+      <div id="viewer-container" ref={containerRef} className="h-full overflow-auto bg-gray-900">
+        <SourceCodeContent content={content} filePath={currentFilePath} />
+      </div>
     )
   }
 
   // Markdown raw text mode
   if (mode === 'markdown') {
     return (
-      <div id="viewer-container" className="h-full overflow-auto bg-gray-50">
+      <div id="viewer-container" ref={containerRef} className="h-full overflow-auto bg-gray-50">
         <pre className="p-6 text-sm font-mono leading-relaxed text-gray-800 whitespace-pre-wrap break-words">
-          {searchKeyword ? highlightSearchInText(content, searchKeyword, currentMatchPos ?? -1) : content}
+          {content}
         </pre>
       </div>
     )
@@ -167,7 +199,7 @@ export default function MarkdownViewer({ content, mode, currentFilePath, onFileL
 
   // Markdown preview mode
   return (
-    <div id="viewer-container" className="h-full overflow-auto bg-white" ref={viewerRef}>
+    <div id="viewer-container" ref={containerRef} className="h-full overflow-auto bg-white">
       <div className="max-w-4xl mx-auto p-8">
         <ReactMarkdown
           className="markdown-body"
@@ -243,11 +275,8 @@ export default function MarkdownViewer({ content, mode, currentFilePath, onFileL
   )
 }
 
-// Plain text viewer with search highlights and syntax highlighting
-function PlainTextViewer({ content, filePath, searchKeyword, currentMatchPos }: {
-  content: string; filePath: string | null; searchKeyword?: string; currentMatchPos?: number
-}) {
-  const containerRef = useRef<HTMLDivElement>(null)
+// Source code content with syntax highlighting (rendered as HTML, search highlights applied via DOM)
+function SourceCodeContent({ content, filePath }: { content: string; filePath: string | null }) {
   const language = getLanguageFromPath(filePath)
 
   const highlightedHtml = useMemo(() => {
@@ -261,62 +290,9 @@ function PlainTextViewer({ content, filePath, searchKeyword, currentMatchPos }: 
     }
   }, [content, language])
 
-  // Inject search highlights into the HTML
-  const htmlWithSearch = useMemo(() => {
-    if (!searchKeyword) return highlightedHtml
-    // We need to highlight the keyword in the already-syntax-highlighted HTML.
-    // This is tricky because the HTML contains tags. We'll do a simple approach:
-    // find keyword in text nodes and wrap them with <mark>.
-    // For simplicity, we'll search in the plain text and map positions to the HTML.
-    // A simpler approach: just search the HTML for the keyword text (which may break tags)
-    // Safer approach: use the plain text content to find positions, then manipulate the HTML.
-
-    // Simplest safe approach: highlight in the raw text, then syntax highlight
-    // But that conflicts with hljs. So we'll use a post-processing approach:
-    // Add <mark> tags only within text nodes of the HTML.
-    const escaped = searchKeyword.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
-    const regex = new RegExp(`(${escaped})`, 'gi')
-    // Only replace in text between > and < (i.e., visible text)
-    return highlightedHtml.replace(/>([^<]+)</g, (_fullMatch, textContent: string) => {
-      const highlighted = textContent.replace(regex, (m: string) => `<mark class="search-highlight bg-yellow-200">${m}</mark>`)
-      return `>${highlighted}<`
-    })
-  }, [highlightedHtml, searchKeyword])
-
-  // Scroll to current match
-  useEffect(() => {
-    if (!searchKeyword || currentMatchPos === undefined || currentMatchPos < 0) return
-    const container = containerRef.current
-    if (!container) return
-    // Use window.find approach or just scroll to first mark
-    const marks = container.querySelectorAll('mark.search-highlight')
-    if (marks.length > 0) {
-      // Calculate which mark to scroll to based on position
-      const charPos = currentMatchPos
-      let accLen = 0
-      for (let i = 0; i < marks.length; i++) {
-        accLen += marks[i].textContent?.length || 0
-        if (i * searchKeyword.length <= charPos) {
-          marks[i].scrollIntoView({ behavior: 'smooth', block: 'center' })
-        }
-      }
-      // Simple: just scroll to the first mark for now
-      const idx = Math.floor(charPos / (searchKeyword.length || 1))
-      if (idx >= 0 && idx < marks.length) {
-        marks[idx].scrollIntoView({ behavior: 'smooth', block: 'center' })
-        // Add current highlight style
-        marks.forEach(m => m.classList.remove('search-highlight-current'))
-        marks[idx].classList.add('search-highlight-current')
-        ;(marks[idx] as HTMLElement).style.backgroundColor = '#fb923c'
-      }
-    }
-  }, [currentMatchPos, searchKeyword])
-
   return (
-    <div id="viewer-container" ref={containerRef} className="h-full overflow-auto bg-gray-900">
-      <pre className="p-6 text-sm font-mono leading-relaxed overflow-x-auto">
-        <code className={`language-${language || 'plaintext'}`} dangerouslySetInnerHTML={{ __html: htmlWithSearch }} />
-      </pre>
-    </div>
+    <pre className="p-6 text-sm font-mono leading-relaxed overflow-x-auto">
+      <code className={`language-${language || 'plaintext'}`} dangerouslySetInnerHTML={{ __html: highlightedHtml }} />
+    </pre>
   )
 }

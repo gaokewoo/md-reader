@@ -94,11 +94,16 @@
 
   /* Search highlight styles */
   mark.search-highlight {
-    @apply bg-yellow-200 rounded-sm px-0.5;
+    background-color: #fef08a;
+    border-radius: 2px;
+    padding: 0 1px;
   }
 
   mark.search-highlight-current {
-    @apply bg-orange-400 text-white rounded-sm px-0.5;
+    background-color: #fb923c;
+    color: white;
+    border-radius: 2px;
+    padding: 0 1px;
   }
 
   .markdown-body table {

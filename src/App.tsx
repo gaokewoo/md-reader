@@ -52,54 +52,39 @@ export default function App() {
   const [error, setError] = useState<string | null>(null)
   const [searchVisible, setSearchVisible] = useState(false)
   const [searchKeyword, setSearchKeyword] = useState('')
-  const [searchMatches, setSearchMatches] = useState<number[]>([])
+  const [matchCount, setMatchCount] = useState(0)
   const [currentMatchIndex, setCurrentMatchIndex] = useState(-1)
 
   const workspacesRef = useRef<Workspace[]>([])
   workspacesRef.current = workspaces
 
-  // Helper: get active tab
   const activeTab = tabs.find(t => t.path === activeTabPath) || null
 
   // ---- Search logic ----
 
-  const performSearch = useCallback((keyword: string) => {
-    if (!keyword || !activeTab) {
-      setSearchMatches([])
+  const handleSearchKeywordChange = useCallback((keyword: string) => {
+    setSearchKeyword(keyword)
+    setCurrentMatchIndex(keyword ? 0 : -1)
+  }, [])
+
+  const handleMatchCountChange = useCallback((count: number) => {
+    setMatchCount(count)
+    if (count === 0) {
       setCurrentMatchIndex(-1)
-      return
+    } else if (currentMatchIndex < 0) {
+      setCurrentMatchIndex(0)
     }
-    const content = activeTab.content.toLowerCase()
-    const lower = keyword.toLowerCase()
-    const positions: number[] = []
-    let pos = 0
-    while ((pos = content.indexOf(lower, pos)) !== -1) {
-      positions.push(pos)
-      pos += 1
-    }
-    setSearchMatches(positions)
-    setCurrentMatchIndex(positions.length > 0 ? 0 : -1)
-  }, [activeTab])
+  }, [currentMatchIndex])
 
   const handleSearchPrev = useCallback(() => {
-    if (searchMatches.length === 0) return
-    setCurrentMatchIndex(prev => prev <= 0 ? searchMatches.length - 1 : prev - 1)
-  }, [searchMatches])
+    if (matchCount === 0) return
+    setCurrentMatchIndex(prev => prev <= 0 ? matchCount - 1 : prev - 1)
+  }, [matchCount])
 
   const handleSearchNext = useCallback(() => {
-    if (searchMatches.length === 0) return
-    setCurrentMatchIndex(prev => prev >= searchMatches.length - 1 ? 0 : prev + 1)
-  }, [searchMatches])
-
-  // Re-search when active tab changes
-  useEffect(() => {
-    if (searchKeyword && searchVisible) {
-      performSearch(searchKeyword)
-    } else {
-      setSearchMatches([])
-      setCurrentMatchIndex(-1)
-    }
-  }, [activeTabPath, performSearch, searchKeyword, searchVisible])
+    if (matchCount === 0) return
+    setCurrentMatchIndex(prev => prev >= matchCount - 1 ? 0 : prev + 1)
+  }, [matchCount])
 
   // ---- Menu Find event ----
 
@@ -110,7 +95,6 @@ export default function App() {
     return off
   }, [])
 
-  // Also listen for Cmd+F in the renderer
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if ((e.metaKey || e.ctrlKey) && e.key === 'f') {
@@ -121,6 +105,12 @@ export default function App() {
     window.addEventListener('keydown', handleKeyDown)
     return () => window.removeEventListener('keydown', handleKeyDown)
   }, [])
+
+  // Reset search when tab changes
+  useEffect(() => {
+    setMatchCount(0)
+    setCurrentMatchIndex(searchKeyword ? 0 : -1)
+  }, [activeTabPath, searchKeyword])
 
   // ---- Add/remove workspace ----
 
@@ -214,9 +204,7 @@ export default function App() {
       setError(null)
       try {
         const success = await addWorkspace(dir)
-        if (!success) {
-          setError('读取文件夹失败')
-        }
+        if (!success) setError('读取文件夹失败')
       } catch (e) {
         setError(String(e))
       } finally {
@@ -229,9 +217,7 @@ export default function App() {
   useEffect(() => {
     const off = window.electronAPI.onMenuOpenFile(async (fp: string) => {
       const parent = fp.substring(0, fp.lastIndexOf('/'))
-      if (parent) {
-        await addWorkspace(parent)
-      }
+      if (parent) await addWorkspace(parent)
       await openFileTab(fp)
     })
     return off
@@ -246,9 +232,7 @@ export default function App() {
     setError(null)
     try {
       const success = await addWorkspace(p)
-      if (!success) {
-        setError('读取文件夹失败')
-      }
+      if (!success) setError('读取文件夹失败')
     } catch (e) {
       setError(String(e))
     } finally {
@@ -296,14 +280,11 @@ export default function App() {
             {workspaces.length > 0 ? (
               workspaces.map((ws) => (
                 <div key={ws.path} className="border-b border-gray-200 last:border-b-0">
-                  {/* Workspace header */}
                   <div className="flex items-center px-2 py-1.5 bg-gray-100 border-b border-gray-200 group">
                     <svg className="w-3.5 h-3.5 text-yellow-500 mr-1.5 flex-shrink-0" fill="currentColor" viewBox="0 0 20 20">
                       <path d="M2 6a2 2 0 012-2h5l2 2h5a2 2 0 012 2v6a2 2 0 01-2 2H4a2 2 0 01-2-2V6z" />
                     </svg>
-                    <span className="text-xs font-medium text-gray-600 truncate flex-1" title={ws.path}>
-                      {ws.name}
-                    </span>
+                    <span className="text-xs font-medium text-gray-600 truncate flex-1" title={ws.path}>{ws.name}</span>
                     <button
                       className="w-5 h-5 flex items-center justify-center rounded hover:bg-gray-200 text-gray-400 hover:text-gray-600 opacity-0 group-hover:opacity-100 transition-opacity"
                       onClick={() => removeWorkspace(ws.path)}
@@ -343,7 +324,6 @@ export default function App() {
         <div className="flex-1 flex flex-col bg-white">
           {activeTab ? (
             <>
-              {/* Tab bar */}
               <TabBar
                 tabs={tabs.map(t => ({ path: t.path, name: t.name }))}
                 activePath={activeTabPath}
@@ -351,7 +331,6 @@ export default function App() {
                 onClose={closeTab}
                 onCloseOthers={closeOtherTabs}
               />
-              {/* Viewer header */}
               <div className="h-10 shrink-0 border-b border-gray-200 flex items-center justify-between px-4 bg-gray-50">
                 <div className="flex items-center gap-2">
                   <svg className={`w-4 h-4 flex-shrink-0 ${isMarkdownFile(activeTab.path) ? 'text-blue-500' : 'text-gray-500'}`} fill="currentColor" viewBox="0 0 20 20">
@@ -360,7 +339,6 @@ export default function App() {
                   <span className="text-sm font-medium text-gray-700 truncate max-w-md">{activeTab.name}</span>
                 </div>
                 <div className="flex items-center gap-2">
-                  {/* Find button */}
                   <button
                     onClick={() => setSearchVisible(!searchVisible)}
                     className={`p-1 rounded transition-colors ${searchVisible ? 'text-blue-600 bg-blue-50' : 'text-gray-500 hover:text-gray-700 hover:bg-gray-100'}`}
@@ -386,12 +364,11 @@ export default function App() {
                   )}
                 </div>
               </div>
-              {/* Search bar */}
               <SearchBar
                 visible={searchVisible}
-                onClose={() => setSearchVisible(false)}
-                onSearch={setSearchKeyword}
-                matchCount={searchMatches.length}
+                onClose={() => { setSearchVisible(false); setSearchKeyword('') }}
+                onSearch={handleSearchKeywordChange}
+                matchCount={matchCount}
                 currentMatch={currentMatchIndex >= 0 ? currentMatchIndex + 1 : 0}
                 onPrev={handleSearchPrev}
                 onNext={handleSearchNext}
@@ -410,7 +387,8 @@ export default function App() {
                     currentFilePath={activeTab.path}
                     onFileLinkClick={handleFileLinkClick}
                     searchKeyword={searchKeyword}
-                    currentMatchPos={currentMatchIndex >= 0 ? searchMatches[currentMatchIndex] : -1}
+                    currentMatchIndex={currentMatchIndex}
+                    onMatchCountChange={handleMatchCountChange}
                   />
                 )}
               </div>
