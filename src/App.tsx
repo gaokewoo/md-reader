@@ -2,6 +2,7 @@ import { useState, useCallback, useEffect, useRef } from 'react'
 import FileTree from './components/FileTree'
 import MarkdownViewer from './components/MarkdownViewer'
 import TabBar from './components/TabBar'
+import SearchBar from './components/SearchBar'
 
 type ViewMode = 'preview' | 'markdown'
 
@@ -39,7 +40,6 @@ function getFileLanguageLabel(filePath: string): string {
   return labels[ext] || ext.toUpperCase()
 }
 
-// Check if a file path belongs to any workspace
 function isFileInWorkspace(filePath: string, workspacePath: string): boolean {
   return filePath.startsWith(workspacePath + '/')
 }
@@ -50,6 +50,10 @@ export default function App() {
   const [activeTabPath, setActiveTabPath] = useState<string | null>(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [searchVisible, setSearchVisible] = useState(false)
+  const [searchKeyword, setSearchKeyword] = useState('')
+  const [searchMatches, setSearchMatches] = useState<number[]>([])
+  const [currentMatchIndex, setCurrentMatchIndex] = useState(-1)
 
   const workspacesRef = useRef<Workspace[]>([])
   workspacesRef.current = workspaces
@@ -57,9 +61,70 @@ export default function App() {
   // Helper: get active tab
   const activeTab = tabs.find(t => t.path === activeTabPath) || null
 
-  // Add a workspace (if not already present)
+  // ---- Search logic ----
+
+  const performSearch = useCallback((keyword: string) => {
+    if (!keyword || !activeTab) {
+      setSearchMatches([])
+      setCurrentMatchIndex(-1)
+      return
+    }
+    const content = activeTab.content.toLowerCase()
+    const lower = keyword.toLowerCase()
+    const positions: number[] = []
+    let pos = 0
+    while ((pos = content.indexOf(lower, pos)) !== -1) {
+      positions.push(pos)
+      pos += 1
+    }
+    setSearchMatches(positions)
+    setCurrentMatchIndex(positions.length > 0 ? 0 : -1)
+  }, [activeTab])
+
+  const handleSearchPrev = useCallback(() => {
+    if (searchMatches.length === 0) return
+    setCurrentMatchIndex(prev => prev <= 0 ? searchMatches.length - 1 : prev - 1)
+  }, [searchMatches])
+
+  const handleSearchNext = useCallback(() => {
+    if (searchMatches.length === 0) return
+    setCurrentMatchIndex(prev => prev >= searchMatches.length - 1 ? 0 : prev + 1)
+  }, [searchMatches])
+
+  // Re-search when active tab changes
+  useEffect(() => {
+    if (searchKeyword && searchVisible) {
+      performSearch(searchKeyword)
+    } else {
+      setSearchMatches([])
+      setCurrentMatchIndex(-1)
+    }
+  }, [activeTabPath, performSearch, searchKeyword, searchVisible])
+
+  // ---- Menu Find event ----
+
+  useEffect(() => {
+    const off = window.electronAPI.onMenuFind(() => {
+      setSearchVisible(true)
+    })
+    return off
+  }, [])
+
+  // Also listen for Cmd+F in the renderer
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.key === 'f') {
+        e.preventDefault()
+        setSearchVisible(true)
+      }
+    }
+    window.addEventListener('keydown', handleKeyDown)
+    return () => window.removeEventListener('keydown', handleKeyDown)
+  }, [])
+
+  // ---- Add/remove workspace ----
+
   const addWorkspace = useCallback(async (dir: string) => {
-    // Check if already exists
     if (workspacesRef.current.some(w => w.path === dir)) return true
     try {
       const r = await window.electronAPI.readFolder(dir)
@@ -74,13 +139,10 @@ export default function App() {
     }
   }, [])
 
-  // Remove a workspace and close its tabs
   const removeWorkspace = useCallback((dir: string) => {
     setWorkspaces(prev => prev.filter(w => w.path !== dir))
-    // Close tabs that belong to this workspace
     setTabs(prev => {
       const remaining = prev.filter(t => !isFileInWorkspace(t.path, dir))
-      // If the active tab was closed, switch to the first remaining tab
       const activeStillExists = remaining.some(t => t.path === activeTabPath)
       if (!activeStillExists) {
         setActiveTabPath(remaining.length > 0 ? remaining[0].path : null)
@@ -89,16 +151,15 @@ export default function App() {
     })
   }, [activeTabPath])
 
-  // Open a file as a new tab (or switch to existing tab if already open)
+  // ---- File tab management ----
+
   const openFileTab = useCallback(async (filePath: string) => {
-    // If tab already exists, just switch to it
     const existing = tabs.find(t => t.path === filePath)
     if (existing) {
       setActiveTabPath(filePath)
       return
     }
 
-    // Read the file and add as new tab
     setLoading(true)
     setError(null)
     try {
@@ -119,7 +180,6 @@ export default function App() {
     }
   }, [tabs])
 
-  // Close a tab
   const closeTab = useCallback((path: string) => {
     setTabs(prev => {
       const idx = prev.findIndex(t => t.path === path)
@@ -137,13 +197,11 @@ export default function App() {
     })
   }, [activeTabPath])
 
-  // Close all tabs except the specified one
   const closeOtherTabs = useCallback((path: string) => {
     setTabs(prev => prev.filter(t => t.path === path))
     setActiveTabPath(path)
   }, [])
 
-  // Update tab view mode
   const setTabViewMode = useCallback((path: string, mode: ViewMode) => {
     setTabs(prev => prev.map(t => t.path === path ? { ...t, viewMode: mode } : t))
   }, [])
@@ -170,18 +228,16 @@ export default function App() {
 
   useEffect(() => {
     const off = window.electronAPI.onMenuOpenFile(async (fp: string) => {
-      // Add parent directory as workspace if not already present
       const parent = fp.substring(0, fp.lastIndexOf('/'))
       if (parent) {
         await addWorkspace(parent)
       }
-      // Open file as tab
       await openFileTab(fp)
     })
     return off
   }, [addWorkspace, openFileTab])
 
-  // ---- Toolbar: open folder ----
+  // ---- Toolbar ----
 
   const handleToolbarOpen = useCallback(async () => {
     const p = await window.electronAPI.selectFolder()
@@ -200,14 +256,12 @@ export default function App() {
     }
   }, [addWorkspace])
 
-  // ---- File tree click ----
+  // ---- File tree / link click ----
 
   const handleTreeSelect = useCallback(async (p: string, type: string) => {
     if (type !== 'file') return
     await openFileTab(p)
   }, [openFileTab])
-
-  // ---- File link click from markdown ----
 
   const handleFileLinkClick = useCallback(async (filePath: string) => {
     await openFileTab(filePath)
@@ -260,7 +314,6 @@ export default function App() {
                       </svg>
                     </button>
                   </div>
-                  {/* Workspace file tree */}
                   <FileTree nodes={ws.tree} selectedPath={activeTabPath} onSelect={handleTreeSelect} />
                 </div>
               ))
@@ -306,21 +359,43 @@ export default function App() {
                   </svg>
                   <span className="text-sm font-medium text-gray-700 truncate max-w-md">{activeTab.name}</span>
                 </div>
-                {isMarkdownFile(activeTab.path) ? (
-                  <div className="flex bg-gray-200 rounded-lg p-0.5">
-                    {['preview', 'markdown'].map(m => (
-                      <button key={m} onClick={() => setTabViewMode(activeTabPath!, m as ViewMode)}
-                        className={`px-3 py-1 text-xs font-medium rounded-md transition-colors ${activeTab.viewMode === m ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-600 hover:text-gray-900'}`}>
-                        {m[0].toUpperCase() + m.slice(1)}
-                      </button>
-                    ))}
-                  </div>
-                ) : (
-                  <span className="px-2.5 py-1 text-xs font-medium text-gray-500 bg-gray-200 rounded-md">
-                    {getFileLanguageLabel(activeTab.path)}
-                  </span>
-                )}
+                <div className="flex items-center gap-2">
+                  {/* Find button */}
+                  <button
+                    onClick={() => setSearchVisible(!searchVisible)}
+                    className={`p-1 rounded transition-colors ${searchVisible ? 'text-blue-600 bg-blue-50' : 'text-gray-500 hover:text-gray-700 hover:bg-gray-100'}`}
+                    title="查找 (Cmd+F)"
+                  >
+                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+                    </svg>
+                  </button>
+                  {isMarkdownFile(activeTab.path) ? (
+                    <div className="flex bg-gray-200 rounded-lg p-0.5">
+                      {['preview', 'markdown'].map(m => (
+                        <button key={m} onClick={() => setTabViewMode(activeTabPath!, m as ViewMode)}
+                          className={`px-3 py-1 text-xs font-medium rounded-md transition-colors ${activeTab.viewMode === m ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-600 hover:text-gray-900'}`}>
+                          {m[0].toUpperCase() + m.slice(1)}
+                        </button>
+                      ))}
+                    </div>
+                  ) : (
+                    <span className="px-2.5 py-1 text-xs font-medium text-gray-500 bg-gray-200 rounded-md">
+                      {getFileLanguageLabel(activeTab.path)}
+                    </span>
+                  )}
+                </div>
               </div>
+              {/* Search bar */}
+              <SearchBar
+                visible={searchVisible}
+                onClose={() => setSearchVisible(false)}
+                onSearch={setSearchKeyword}
+                matchCount={searchMatches.length}
+                currentMatch={currentMatchIndex >= 0 ? currentMatchIndex + 1 : 0}
+                onPrev={handleSearchPrev}
+                onNext={handleSearchNext}
+              />
               <div className="flex-1 overflow-auto">
                 {loading ? (
                   <div className="flex items-center justify-center h-full"><div className="w-6 h-6 border-2 border-blue-600 border-t-transparent rounded-full animate-spin" /></div>
@@ -334,6 +409,8 @@ export default function App() {
                     mode={activeTab.viewMode}
                     currentFilePath={activeTab.path}
                     onFileLinkClick={handleFileLinkClick}
+                    searchKeyword={searchKeyword}
+                    currentMatchPos={currentMatchIndex >= 0 ? searchMatches[currentMatchIndex] : -1}
                   />
                 )}
               </div>

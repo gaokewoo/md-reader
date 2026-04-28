@@ -20,5 +20,6 @@ interface Window {
     resolveFilePath: (basePath: string, relativePath: string) => Promise<string | null>
     onMenuOpenFolder: (fn: (path: string) => void) => () => void
     onMenuOpenFile:   (fn: (path: string) => void) => () => void
+    onMenuFind:       (fn: () => void) => () => void
   }
 }

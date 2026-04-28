@@ -18,4 +18,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
     ipcRenderer.on('menu:open-file', handler)
     return () => { ipcRenderer.removeListener('menu:open-file', handler) }
   },
+  onMenuFind: (fn: () => void) => {
+    const handler = () => fn()
+    ipcRenderer.on('menu:find', handler)
+    return () => { ipcRenderer.removeListener('menu:find', handler) }
+  },
 })

@@ -25,6 +25,47 @@ function createWindow() {
   }
 
   mainWindow.on('closed', () => { mainWindow = null })
+
+  // Right-click context menu for copy/paste
+  mainWindow.webContents.on('context-menu', (_event, params) => {
+    const menuItems: Electron.MenuItemConstructorOptions[] = []
+
+    if (params.selectionText) {
+      menuItems.push({
+        label: '复制',
+        accelerator: 'CmdOrCtrl+C',
+        role: 'copy',
+      })
+    }
+
+    if (params.isEditable) {
+      menuItems.push({
+        label: '粘贴',
+        accelerator: 'CmdOrCtrl+V',
+        role: 'paste',
+      })
+      menuItems.push({
+        label: '剪切',
+        accelerator: 'CmdOrCtrl+X',
+        role: 'cut',
+      })
+      menuItems.push({
+        label: '全选',
+        accelerator: 'CmdOrCtrl+A',
+        role: 'selectAll',
+      })
+    } else if (params.selectionText) {
+      menuItems.push({
+        label: '全选',
+        accelerator: 'CmdOrCtrl+A',
+        role: 'selectAll',
+      })
+    }
+
+    if (menuItems.length > 0) {
+      Menu.buildFromTemplate(menuItems).popup({ window: mainWindow! })
+    }
+  })
 }
 
 function ensureWin(): BrowserWindow {
@@ -93,7 +134,29 @@ function buildMenu() {
         { role: 'close' },
       ],
     },
-    { role: 'editMenu' },
+    {
+      label: 'Edit',
+      submenu: [
+        { role: 'undo' },
+        { role: 'redo' },
+        { type: 'separator' },
+        { role: 'cut' },
+        { role: 'copy' },
+        { role: 'paste' },
+        { role: 'selectAll' },
+        { type: 'separator' },
+        {
+          label: 'Find...',
+          accelerator: 'CmdOrCtrl+F',
+          click: () => {
+            const win = BrowserWindow.getAllWindows().find(w => !w.isDestroyed())
+            if (win && !win.webContents.isDestroyed()) {
+              win.webContents.send('menu:find')
+            }
+          },
+        },
+      ],
+    },
     { role: 'viewMenu' },
     {
       label: 'Window',

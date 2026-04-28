@@ -92,6 +92,15 @@
     @apply text-blue-600 hover:underline cursor-pointer font-medium bg-blue-50 px-0.5 rounded;
   }
 
+  /* Search highlight styles */
+  mark.search-highlight {
+    @apply bg-yellow-200 rounded-sm px-0.5;
+  }
+
+  mark.search-highlight-current {
+    @apply bg-orange-400 text-white rounded-sm px-0.5;
+  }
+
   .markdown-body table {
     @apply w-full border-collapse mb-4;
   }
