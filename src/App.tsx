@@ -12,6 +12,12 @@ interface TabInfo {
   viewMode: ViewMode
 }
 
+interface Workspace {
+  path: string
+  name: string
+  tree: FNode[]
+}
+
 function isMarkdownFile(filePath: string): boolean {
   const ext = filePath.split('.').pop()?.toLowerCase() || ''
   return ext === 'md' || ext === 'markdown'
@@ -33,19 +39,55 @@ function getFileLanguageLabel(filePath: string): string {
   return labels[ext] || ext.toUpperCase()
 }
 
+// Check if a file path belongs to any workspace
+function isFileInWorkspace(filePath: string, workspacePath: string): boolean {
+  return filePath.startsWith(workspacePath + '/')
+}
+
 export default function App() {
-  const [folderPath, setFolderPath] = useState<string | null>(null)
-  const [fileTree, setFileTree] = useState<Array<any>>([])
+  const [workspaces, setWorkspaces] = useState<Workspace[]>([])
   const [tabs, setTabs] = useState<TabInfo[]>([])
   const [activeTabPath, setActiveTabPath] = useState<string | null>(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
-  const folderPathRef = useRef<string | null>(null)
-  folderPathRef.current = folderPath
+  const workspacesRef = useRef<Workspace[]>([])
+  workspacesRef.current = workspaces
 
   // Helper: get active tab
   const activeTab = tabs.find(t => t.path === activeTabPath) || null
+
+  // Add a workspace (if not already present)
+  const addWorkspace = useCallback(async (dir: string) => {
+    // Check if already exists
+    if (workspacesRef.current.some(w => w.path === dir)) return true
+    try {
+      const r = await window.electronAPI.readFolder(dir)
+      if (r.ok && r.tree) {
+        const name = dir.split('/').pop() || dir
+        setWorkspaces(prev => [...prev, { path: dir, name, tree: r.tree! }])
+        return true
+      }
+      return false
+    } catch {
+      return false
+    }
+  }, [])
+
+  // Remove a workspace and close its tabs
+  const removeWorkspace = useCallback((dir: string) => {
+    setWorkspaces(prev => prev.filter(w => w.path !== dir))
+    // Close tabs that belong to this workspace
+    setTabs(prev => {
+      const remaining = prev.filter(t => !isFileInWorkspace(t.path, dir))
+      // If the active tab was closed, switch to the first remaining tab
+      const activeStillExists = remaining.some(t => t.path === activeTabPath)
+      if (!activeStillExists) {
+        setActiveTabPath(remaining.length > 0 ? remaining[0].path : null)
+      }
+      return remaining
+    })
+  }, [activeTabPath])
 
   // Open a file as a new tab (or switch to existing tab if already open)
   const openFileTab = useCallback(async (filePath: string) => {
@@ -82,7 +124,6 @@ export default function App() {
     setTabs(prev => {
       const idx = prev.findIndex(t => t.path === path)
       const next = prev.filter(t => t.path !== path)
-      // If closing the active tab, switch to the nearest tab
       if (path === activeTabPath) {
         if (next.length === 0) {
           setActiveTabPath(null)
@@ -111,68 +152,53 @@ export default function App() {
 
   useEffect(() => {
     const off = window.electronAPI.onMenuOpenFolder(async (dir: string) => {
-      setFolderPath(dir)
-      setTabs([])
-      setActiveTabPath(null)
-      setError(null)
       setLoading(true)
+      setError(null)
       try {
-        const r = await window.electronAPI.readFolder(dir)
-        if (r.ok && r.tree) {
-          setFileTree(r.tree)
-        } else {
-          setError(r.error ?? '读取文件夹失败')
-          setFileTree([])
+        const success = await addWorkspace(dir)
+        if (!success) {
+          setError('读取文件夹失败')
         }
       } catch (e) {
         setError(String(e))
-        setFileTree([])
       } finally {
         setLoading(false)
       }
     })
     return off
-  }, [])
+  }, [addWorkspace])
 
   useEffect(() => {
     const off = window.electronAPI.onMenuOpenFile(async (fp: string) => {
-      // Load parent directory tree if needed
+      // Add parent directory as workspace if not already present
       const parent = fp.substring(0, fp.lastIndexOf('/'))
-      if (parent && parent !== folderPathRef.current) {
-        setFolderPath(parent)
-        try {
-          const r = await window.electronAPI.readFolder(parent)
-          if (r.ok && r.tree) setFileTree(r.tree)
-          else setFileTree([])
-        } catch { setFileTree([]) }
+      if (parent) {
+        await addWorkspace(parent)
       }
       // Open file as tab
       await openFileTab(fp)
     })
     return off
-  }, [openFileTab])
+  }, [addWorkspace, openFileTab])
 
   // ---- Toolbar: open folder ----
 
   const handleToolbarOpen = useCallback(async () => {
     const p = await window.electronAPI.selectFolder()
     if (!p) return
-    setFolderPath(p)
-    setTabs([])
-    setActiveTabPath(null)
-    setError(null)
     setLoading(true)
+    setError(null)
     try {
-      const r = await window.electronAPI.readFolder(p)
-      if (r.ok && r.tree) setFileTree(r.tree)
-      else { setError(r.error ?? '读取文件夹失败'); setFileTree([]) }
+      const success = await addWorkspace(p)
+      if (!success) {
+        setError('读取文件夹失败')
+      }
     } catch (e) {
       setError(String(e))
-      setFileTree([])
     } finally {
       setLoading(false)
     }
-  }, [])
+  }, [addWorkspace])
 
   // ---- File tree click ----
 
@@ -184,15 +210,6 @@ export default function App() {
   // ---- File link click from markdown ----
 
   const handleFileLinkClick = useCallback(async (filePath: string) => {
-    // If the file's parent directory is different, update the folder tree
-    const parent = filePath.substring(0, filePath.lastIndexOf('/'))
-    if (parent && parent !== folderPathRef.current) {
-      setFolderPath(parent)
-      try {
-        const r = await window.electronAPI.readFolder(parent)
-        if (r.ok && r.tree) setFileTree(r.tree)
-      } catch { /* ignore */ }
-    }
     await openFileTab(filePath)
   }, [openFileTab])
 
@@ -221,25 +238,43 @@ export default function App() {
       <div className="flex-1 flex overflow-hidden">
         {/* Sidebar */}
         <div className="w-72 shrink-0 bg-gray-50 border-r border-gray-200 flex flex-col">
-          {folderPath && (
-            <div className="px-3 py-2 border-b border-gray-200 text-xs text-gray-500 truncate" title={folderPath}>
-              {folderPath}
-            </div>
-          )}
           <div className="flex-1 overflow-auto">
-            {loading && tabs.length === 0 ? (
+            {workspaces.length > 0 ? (
+              workspaces.map((ws) => (
+                <div key={ws.path} className="border-b border-gray-200 last:border-b-0">
+                  {/* Workspace header */}
+                  <div className="flex items-center px-2 py-1.5 bg-gray-100 border-b border-gray-200 group">
+                    <svg className="w-3.5 h-3.5 text-yellow-500 mr-1.5 flex-shrink-0" fill="currentColor" viewBox="0 0 20 20">
+                      <path d="M2 6a2 2 0 012-2h5l2 2h5a2 2 0 012 2v6a2 2 0 01-2 2H4a2 2 0 01-2-2V6z" />
+                    </svg>
+                    <span className="text-xs font-medium text-gray-600 truncate flex-1" title={ws.path}>
+                      {ws.name}
+                    </span>
+                    <button
+                      className="w-5 h-5 flex items-center justify-center rounded hover:bg-gray-200 text-gray-400 hover:text-gray-600 opacity-0 group-hover:opacity-100 transition-opacity"
+                      onClick={() => removeWorkspace(ws.path)}
+                      title="移除文件夹"
+                    >
+                      <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                      </svg>
+                    </button>
+                  </div>
+                  {/* Workspace file tree */}
+                  <FileTree nodes={ws.tree} selectedPath={activeTabPath} onSelect={handleTreeSelect} />
+                </div>
+              ))
+            ) : loading ? (
               <div className="flex items-center justify-center h-32">
                 <div className="w-5 h-5 border-2 border-blue-600 border-t-transparent rounded-full animate-spin" />
               </div>
-            ) : error && fileTree.length === 0 ? (
+            ) : error ? (
               <div className="flex flex-col items-center justify-center h-full text-gray-400 px-6">
                 <svg className="w-10 h-10 mb-2 text-red-300" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M12 9v2m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
                 </svg>
                 <p className="text-xs text-red-400 text-center">{error}</p>
               </div>
-            ) : fileTree.length > 0 ? (
-              <FileTree nodes={fileTree} selectedPath={activeTabPath} onSelect={handleTreeSelect} />
             ) : (
               <div className="flex flex-col items-center justify-center h-full text-gray-400 px-6">
                 <svg className="w-12 h-12 mb-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
