@@ -227,15 +227,56 @@ ipcMain.handle('check-file-exists', async (_, fp: string) => {
 })
 
 ipcMain.handle('resolve-file-path', async (_, basePath: string, relativePath: string) => {
-  // Try resolving relative path from the base file's directory
+  // Strip anchor and query string, then URL-decode
+  let cleanPath = relativePath.replace(/#[\w\-./]*$/, '').replace(/\?[\w=&]*$/, '')
+  try { cleanPath = decodeURIComponent(cleanPath) } catch { /* ignore */ }
+  if (!cleanPath) return null
+
   const dir = basePath.substring(0, basePath.lastIndexOf('/'))
-  const resolved = path.resolve(dir, relativePath)
-  try {
-    if (fs.existsSync(resolved) && fs.statSync(resolved).isFile()) {
-      return resolved
+
+  // For paths starting with '/', strip the leading '/' so we treat it as
+  // relative to the workspace root (not filesystem root)
+  const pathToResolve = cleanPath.startsWith('/') ? cleanPath.substring(1) : cleanPath
+
+  // Walk up from the file's directory, trying to resolve the path at each level
+  let currentDir = dir
+  for (let i = 0; i < 20; i++) {
+    const resolved = path.resolve(currentDir, pathToResolve)
+
+    // 1. Try exact match
+    try {
+      if (fs.existsSync(resolved) && fs.statSync(resolved).isFile()) {
+        return resolved
+      }
+    } catch { /* ignore */ }
+
+    // 2. Try appending common extensions (for links without extension)
+    const extensions = ['.md', '.markdown', '.txt', '.yaml', '.yml', '.json']
+    for (const ext of extensions) {
+      const withExt = resolved + ext
+      try {
+        if (fs.existsSync(withExt) && fs.statSync(withExt).isFile()) {
+          return withExt
+        }
+      } catch { /* ignore */ }
     }
-  } catch { /* ignore */ }
-  // Also try from the folder root
+
+    // 3. Try treating as directory and look for README.md or index.md
+    for (const indexFile of ['README.md', 'index.md', 'readme.md']) {
+      const indexPath = path.join(resolved, indexFile)
+      try {
+        if (fs.existsSync(indexPath) && fs.statSync(indexPath).isFile()) {
+          return indexPath
+        }
+      } catch { /* ignore */ }
+    }
+
+    // Walk up one level
+    const parent = path.dirname(currentDir)
+    if (parent === currentDir) break // reached filesystem root
+    currentDir = parent
+  }
+
   return null
 })
 

@@ -15,10 +15,10 @@ interface MarkdownViewerProps {
   onMatchCountChange?: (count: number) => void
 }
 
-const MD_PATH_PATTERN = /[\w\-](?:[\w\-./]*\/[\w\-./]+\.(?:md|markdown))/i
+const FILE_PATH_PATTERN = /[\w][\w\-]*(?:\/[\w\-./]+)*\.\w{1,12}/i
 
 function isMdFilePath(text: string): boolean {
-  return MD_PATH_PATTERN.test(text)
+  return FILE_PATH_PATTERN.test(text)
 }
 
 function isMarkdownFile(filePath: string | null): boolean {
@@ -170,8 +170,7 @@ export default function MarkdownViewer({ content, mode, currentFilePath, onFileL
 
   const handlePathClick = async (relativePath: string) => {
     if (!currentFilePath) return
-    const cleanPath = relativePath.replace(/#[\w-]*$/, '').replace(/\?[\w=&]*$/, '')
-    const resolved = await window.electronAPI.resolveFilePath(currentFilePath, cleanPath)
+    const resolved = await window.electronAPI.resolveFilePath(currentFilePath, relativePath)
     if (resolved) {
       onFileLinkClick(resolved)
     }
@@ -221,11 +220,12 @@ export default function MarkdownViewer({ content, mode, currentFilePath, onFileL
             a: ({ href, children }) => {
               if (!href) return <a href={href}>{children}</a>
 
-              const isMdLink = /\.(md|markdown)(#[\w-]*)?(\?[\w=&]*)?$/i.test(href)
-              const isRelativeLink = href.startsWith('./') || href.startsWith('../') || href.startsWith('/') ||
-                (!href.startsWith('http') && !href.startsWith('#') && !href.startsWith('mailto:') && !href.startsWith('ftp'))
+              // Determine if this is a relative/local file link (not external URL, not anchor)
+              const isExternalUrl = href.startsWith('http://') || href.startsWith('https://') || href.startsWith('ftp://') || href.startsWith('mailto:')
+              const isAnchor = href.startsWith('#')
 
-              if (isMdLink && isRelativeLink && currentFilePath) {
+              if (!isExternalUrl && !isAnchor && currentFilePath) {
+                // This is a relative file link - make it clickable
                 return (
                   <a
                     href="#"
@@ -233,7 +233,7 @@ export default function MarkdownViewer({ content, mode, currentFilePath, onFileL
                       e.preventDefault()
                       handlePathClick(href)
                     }}
-                    className="text-blue-600 hover:underline cursor-pointer font-medium"
+                    className="md-file-link"
                   >
                     {children}
                     <FileLinkIcon />
