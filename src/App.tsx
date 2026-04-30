@@ -3,6 +3,8 @@ import FileTree from './components/FileTree'
 import MarkdownViewer from './components/MarkdownViewer'
 import TabBar from './components/TabBar'
 import SearchBar from './components/SearchBar'
+import TocPanel from './components/TocPanel'
+import TerminalPanel from './components/TerminalPanel'
 
 type ViewMode = 'preview' | 'markdown'
 
@@ -55,13 +57,18 @@ export default function App() {
   const [matchCount, setMatchCount] = useState(0)
   const [currentMatchIndex, setCurrentMatchIndex] = useState(-1)
   const [collapsedWorkspaces, setCollapsedWorkspaces] = useState<Set<string>>(new Set())
-  const [sidebarWidth, setSidebarWidth] = useState(288) // 288px = w-72
+
+  // Panel visibility & sizes
+  const [leftPanelVisible, setLeftPanelVisible] = useState(true)
+  const [rightPanelVisible, setRightPanelVisible] = useState(false)
+  const [bottomPanelVisible, setBottomPanelVisible] = useState(false)
+  const [sidebarWidth, setSidebarWidth] = useState(288)
+  const [bottomPanelHeight, setBottomPanelHeight] = useState(220)
 
   const workspacesRef = useRef<Workspace[]>([])
   workspacesRef.current = workspaces
 
   const isDragging = useRef(false)
-  const sidebarRef = useRef<HTMLDivElement>(null)
 
   const activeTab = tabs.find(t => t.path === activeTabPath) || null
 
@@ -267,9 +274,20 @@ export default function App() {
     })
   }, [])
 
-  // ---- Sidebar resize ----
+  // ---- TOC heading click ----
 
-  const handleResizeStart = useCallback((e: React.MouseEvent) => {
+  const handleHeadingClick = useCallback((id: string) => {
+    const container = document.getElementById('viewer-container')
+    if (!container) return
+    const el = container.querySelector(`#${CSS.escape(id)}`)
+    if (el) {
+      el.scrollIntoView({ behavior: 'smooth', block: 'start' })
+    }
+  }, [])
+
+  // ---- Panel resize (left sidebar) ----
+
+  const handleLeftResizeStart = useCallback((e: React.MouseEvent) => {
     e.preventDefault()
     isDragging.current = true
     const startX = e.clientX
@@ -278,8 +296,7 @@ export default function App() {
     const handleMouseMove = (ev: MouseEvent) => {
       if (!isDragging.current) return
       const diff = ev.clientX - startX
-      const newWidth = Math.max(180, Math.min(600, startWidth + diff))
-      setSidebarWidth(newWidth)
+      setSidebarWidth(Math.max(180, Math.min(600, startWidth + diff)))
     }
 
     const handleMouseUp = () => {
@@ -296,6 +313,38 @@ export default function App() {
     document.addEventListener('mouseup', handleMouseUp)
   }, [sidebarWidth])
 
+  // ---- Panel resize (bottom panel) ----
+
+  const handleBottomResizeStart = useCallback((e: React.MouseEvent) => {
+    e.preventDefault()
+    isDragging.current = true
+    const startY = e.clientY
+    const startHeight = bottomPanelHeight
+
+    const handleMouseMove = (ev: MouseEvent) => {
+      if (!isDragging.current) return
+      const diff = startY - ev.clientY
+      setBottomPanelHeight(Math.max(120, Math.min(500, startHeight + diff)))
+    }
+
+    const handleMouseUp = () => {
+      isDragging.current = false
+      document.removeEventListener('mousemove', handleMouseMove)
+      document.removeEventListener('mouseup', handleMouseUp)
+      document.body.style.cursor = ''
+      document.body.style.userSelect = ''
+    }
+
+    document.body.style.cursor = 'row-resize'
+    document.body.style.userSelect = 'none'
+    document.addEventListener('mousemove', handleMouseMove)
+    document.addEventListener('mouseup', handleMouseUp)
+  }, [bottomPanelHeight])
+
+  // ---- Get terminal CWD from first workspace ----
+
+  const terminalCwd = workspaces.length > 0 ? workspaces[0].path : undefined
+
   return (
     <div className="h-screen flex flex-col bg-white">
       {/* Title bar */}
@@ -309,6 +358,46 @@ export default function App() {
         </div>
 
         <div className="flex-1" />
+
+        {/* Panel toggle buttons */}
+        <div className="flex items-center gap-1 mr-1">
+          {/* Left sidebar toggle — left panel open */}
+          <button
+            onClick={() => setLeftPanelVisible(!leftPanelVisible)}
+            className={`p-1 rounded transition-colors ${leftPanelVisible ? 'text-blue-600 bg-blue-50' : 'text-gray-500 hover:text-gray-700 hover:bg-gray-200'}`}
+            title="切换左侧面板"
+          >
+            <svg className="w-4 h-4" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5">
+              <rect x="1" y="1" width="14" height="14" rx="2" />
+              <line x1="5.5" y1="1" x2="5.5" y2="15" />
+            </svg>
+          </button>
+          {/* Bottom panel toggle — bottom panel open */}
+          <button
+            onClick={() => setBottomPanelVisible(!bottomPanelVisible)}
+            className={`p-1 rounded transition-colors ${bottomPanelVisible ? 'text-blue-600 bg-blue-50' : 'text-gray-500 hover:text-gray-700 hover:bg-gray-200'}`}
+            title="切换底部面板"
+          >
+            <svg className="w-4 h-4" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5">
+              <rect x="1" y="1" width="14" height="14" rx="2" />
+              <line x1="1" y1="10.5" x2="15" y2="10.5" />
+            </svg>
+          </button>
+          {/* Right sidebar toggle — right panel open */}
+          <button
+            onClick={() => setRightPanelVisible(!rightPanelVisible)}
+            className={`p-1 rounded transition-colors ${rightPanelVisible ? 'text-blue-600 bg-blue-50' : 'text-gray-500 hover:text-gray-700 hover:bg-gray-200'}`}
+            title="切换右侧面板"
+          >
+            <svg className="w-4 h-4" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5">
+              <rect x="1" y="1" width="14" height="14" rx="2" />
+              <line x1="10.5" y1="1" x2="10.5" y2="15" />
+            </svg>
+          </button>
+        </div>
+
+        {/* Divider */}
+        <div className="w-px h-5 bg-gray-300 mx-1" />
 
         {/* Search button */}
         <button
@@ -353,105 +442,142 @@ export default function App() {
         </button>
       </div>
 
-      {/* Content area */}
+      {/* Main content area */}
       <div className="flex-1 flex overflow-hidden">
-        {/* Sidebar */}
-        <div
-          ref={sidebarRef}
-          className="shrink-0 bg-gray-50 border-r border-gray-200 flex flex-col"
-          style={{ width: sidebarWidth }}
-        >
-          <div className="flex-1 overflow-auto">
-            {workspaces.length > 0 ? (
-              workspaces.map((ws) => (
-                <FileTree
-                  key={ws.path}
-                  nodes={ws.tree}
-                  selectedPath={activeTabPath}
-                  onSelect={handleTreeSelect}
-                  collapsed={collapsedWorkspaces.has(ws.path)}
-                  onToggleCollapse={() => toggleWorkspaceCollapse(ws.path)}
-                  workspaceName={ws.name}
-                  workspacePath={ws.path}
-                  onRemoveWorkspace={() => removeWorkspace(ws.path)}
-                />
-              ))
-            ) : loading ? (
-              <div className="flex items-center justify-center h-32">
-                <div className="w-5 h-5 border-2 border-blue-600 border-t-transparent rounded-full animate-spin" />
-              </div>
-            ) : error ? (
-              <div className="flex flex-col items-center justify-center h-full text-gray-400 px-6">
-                <svg className="w-10 h-10 mb-2 text-red-300" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M12 9v2m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-                </svg>
-                <p className="text-xs text-red-400 text-center">{error}</p>
-              </div>
-            ) : (
-              <div className="flex flex-col items-center justify-center h-full text-gray-400 px-6">
-                <svg className="w-12 h-12 mb-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z" />
-                </svg>
-                <p className="text-sm text-center">Use File menu or button above</p>
-              </div>
-            )}
-          </div>
-        </div>
-
-        {/* Resize handle */}
-        <div
-          className="w-1 shrink-0 cursor-col-resize hover:bg-blue-400 active:bg-blue-500 transition-colors relative group"
-          onMouseDown={handleResizeStart}
-        >
-          <div className="absolute inset-y-0 -left-1 -right-1" />
-        </div>
-
-        {/* Viewer */}
-        <div className="flex-1 flex flex-col bg-white">
-          {activeTab ? (
-            <>
-              <TabBar
-                tabs={tabs.map(t => ({ path: t.path, name: t.name }))}
-                activePath={activeTabPath}
-                onSelect={setActiveTabPath}
-                onClose={closeTab}
-                onCloseOthers={closeOtherTabs}
-              />
-              <SearchBar
-                visible={searchVisible}
-                onClose={() => { setSearchVisible(false); setSearchKeyword('') }}
-                onSearch={handleSearchKeywordChange}
-                matchCount={matchCount}
-                currentMatch={currentMatchIndex >= 0 ? currentMatchIndex + 1 : 0}
-                onPrev={handleSearchPrev}
-                onNext={handleSearchNext}
-              />
+        {/* Left sidebar */}
+        {leftPanelVisible && (
+          <>
+            <div
+              className="shrink-0 bg-gray-50 border-r border-gray-200 flex flex-col"
+              style={{ width: sidebarWidth }}
+            >
               <div className="flex-1 overflow-auto">
-                {loading ? (
-                  <div className="flex items-center justify-center h-full"><div className="w-6 h-6 border-2 border-blue-600 border-t-transparent rounded-full animate-spin" /></div>
+                {workspaces.length > 0 ? (
+                  workspaces.map((ws) => (
+                    <FileTree
+                      key={ws.path}
+                      nodes={ws.tree}
+                      selectedPath={activeTabPath}
+                      onSelect={handleTreeSelect}
+                      collapsed={collapsedWorkspaces.has(ws.path)}
+                      onToggleCollapse={() => toggleWorkspaceCollapse(ws.path)}
+                      workspaceName={ws.name}
+                      workspacePath={ws.path}
+                      onRemoveWorkspace={() => removeWorkspace(ws.path)}
+                    />
+                  ))
+                ) : loading ? (
+                  <div className="flex items-center justify-center h-32">
+                    <div className="w-5 h-5 border-2 border-blue-600 border-t-transparent rounded-full animate-spin" />
+                  </div>
                 ) : error ? (
-                  <div className="flex items-center justify-center h-full p-8">
-                    <p className="text-red-500 text-sm text-center">{error}</p>
+                  <div className="flex flex-col items-center justify-center h-full text-gray-400 px-6">
+                    <svg className="w-10 h-10 mb-2 text-red-300" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M12 9v2m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                    </svg>
+                    <p className="text-xs text-red-400 text-center">{error}</p>
                   </div>
                 ) : (
-                  <MarkdownViewer
-                    content={activeTab.content}
-                    mode={activeTab.viewMode}
-                    currentFilePath={activeTab.path}
-                    onFileLinkClick={handleFileLinkClick}
-                    searchKeyword={searchKeyword}
-                    currentMatchIndex={currentMatchIndex}
-                    onMatchCountChange={handleMatchCountChange}
-                  />
+                  <div className="flex flex-col items-center justify-center h-full text-gray-400 px-6">
+                    <svg className="w-12 h-12 mb-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z" />
+                    </svg>
+                    <p className="text-sm text-center">Use File menu or button above</p>
+                  </div>
                 )}
               </div>
-            </>
-          ) : (
-            <div className="flex-1 flex flex-col items-center justify-center text-gray-400">
-              <svg className="w-16 h-16 mb-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-              </svg>
-              <p>Select a file to start reading</p>
+            </div>
+            {/* Left resize handle */}
+            <div
+              className="w-1 shrink-0 cursor-col-resize hover:bg-blue-400 active:bg-blue-500 transition-colors relative"
+              onMouseDown={handleLeftResizeStart}
+            >
+              <div className="absolute inset-y-0 -left-1 -right-1" />
+            </div>
+          </>
+        )}
+
+        {/* Center area (viewer + bottom panel) */}
+        <div className="flex-1 flex flex-col overflow-hidden">
+          {/* Viewer + Right panel row */}
+          <div className="flex-1 flex overflow-hidden">
+            {/* Viewer */}
+            <div className="flex-1 flex flex-col bg-white overflow-hidden">
+              {activeTab ? (
+                <>
+                  <TabBar
+                    tabs={tabs.map(t => ({ path: t.path, name: t.name }))}
+                    activePath={activeTabPath}
+                    onSelect={setActiveTabPath}
+                    onClose={closeTab}
+                    onCloseOthers={closeOtherTabs}
+                  />
+                  <SearchBar
+                    visible={searchVisible}
+                    onClose={() => { setSearchVisible(false); setSearchKeyword('') }}
+                    onSearch={handleSearchKeywordChange}
+                    matchCount={matchCount}
+                    currentMatch={currentMatchIndex >= 0 ? currentMatchIndex + 1 : 0}
+                    onPrev={handleSearchPrev}
+                    onNext={handleSearchNext}
+                  />
+                  <div className="flex-1 overflow-auto">
+                    {loading ? (
+                      <div className="flex items-center justify-center h-full"><div className="w-6 h-6 border-2 border-blue-600 border-t-transparent rounded-full animate-spin" /></div>
+                    ) : error ? (
+                      <div className="flex items-center justify-center h-full p-8">
+                        <p className="text-red-500 text-sm text-center">{error}</p>
+                      </div>
+                    ) : (
+                      <MarkdownViewer
+                        content={activeTab.content}
+                        mode={activeTab.viewMode}
+                        currentFilePath={activeTab.path}
+                        onFileLinkClick={handleFileLinkClick}
+                        searchKeyword={searchKeyword}
+                        currentMatchIndex={currentMatchIndex}
+                        onMatchCountChange={handleMatchCountChange}
+                      />
+                    )}
+                  </div>
+                </>
+              ) : (
+                <div className="flex-1 flex flex-col items-center justify-center text-gray-400">
+                  <svg className="w-16 h-16 mb-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                  </svg>
+                  <p>Select a file to start reading</p>
+                </div>
+              )}
+            </div>
+
+            {/* Right TOC panel */}
+            {rightPanelVisible && activeTab && isMarkdownFile(activeTab.path) && activeTab.viewMode === 'preview' && (
+              <TocPanel
+                content={activeTab.content}
+                visible={true}
+                onHeadingClick={handleHeadingClick}
+              />
+            )}
+          </div>
+
+          {/* Bottom panel resize handle */}
+          {bottomPanelVisible && (
+            <div
+              className="h-1 shrink-0 cursor-row-resize hover:bg-blue-400 active:bg-blue-500 transition-colors relative"
+              onMouseDown={handleBottomResizeStart}
+            >
+              <div className="absolute inset-x-0 -top-1 -bottom-1" />
+            </div>
+          )}
+
+          {/* Bottom terminal panel */}
+          {bottomPanelVisible && (
+            <div
+              className="shrink-0 border-t border-gray-300 bg-[#1e1e1e]"
+              style={{ height: bottomPanelHeight }}
+            >
+              <TerminalPanel visible={true} cwd={terminalCwd} />
             </div>
           )}
         </div>

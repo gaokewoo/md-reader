@@ -1,6 +1,7 @@
-import { app, BrowserWindow, dialog, ipcMain, Menu } from 'electron'
+import { app, BrowserWindow, dialog, ipcMain, Menu, shell } from 'electron'
 import path from 'path'
 import fs from 'fs'
+import { spawn, ChildProcess } from 'child_process'
 
 let mainWindow: BrowserWindow | null = null
 
@@ -25,6 +26,23 @@ function createWindow() {
   }
 
   mainWindow.on('closed', () => { mainWindow = null })
+
+  // Handle external links (open in default browser)
+  mainWindow.webContents.setWindowOpenHandler(({ url }) => {
+    // Only allow external http/https URLs to open in browser
+    if (url.startsWith('http://') || url.startsWith('https://')) {
+      shell.openExternal(url)
+    }
+    return { action: 'deny' }
+  })
+
+  // Also handle will-navigate for any remaining cases
+  mainWindow.webContents.on('will-navigate', (event, url) => {
+    if (url.startsWith('http://') || url.startsWith('https://')) {
+      event.preventDefault()
+      shell.openExternal(url)
+    }
+  })
 
   // Right-click context menu for copy/paste
   mainWindow.webContents.on('context-menu', (_event, params) => {
@@ -340,3 +358,96 @@ function scanDir(dir: string): FNode[] {
   out.sort((a, b) => a.type === b.type ? a.name.localeCompare(b.name) : a.type === 'directory' ? -1 : 1)
   return out
 }
+
+// ---- Terminal (using Electron's built-in PTY support) ----
+// Electron's child_process.spawn supports `pty: true` option since Electron 28+
+// This creates a real pseudo-terminal, solving all pipe-buffering issues.
+
+let termProcess: ChildProcess | null = null
+
+ipcMain.handle('pty-spawn', (_, cwd?: string, _cols?: number, _rows?: number) => {
+  if (termProcess) {
+    try { termProcess.kill() } catch { /* ignore */ }
+    termProcess = null
+  }
+
+  const env: Record<string, string> = {}
+  for (const [key, value] of Object.entries(process.env)) {
+    if (typeof value === 'string') {
+      env[key] = value
+    }
+  }
+  env['TERM'] = 'xterm-256color'
+
+  let spawnCwd = cwd || app.getPath('home')
+  try {
+    if (!fs.statSync(spawnCwd).isDirectory()) {
+      spawnCwd = app.getPath('home')
+    }
+  } catch {
+    spawnCwd = app.getPath('home')
+  }
+
+  try {
+    // Use Electron's built-in PTY support: pty: true creates a real pseudo-terminal
+    // zsh will see a real TTY → proper line buffering, prompt display, etc.
+    // TypeScript doesn't know about pty option, so we cast options
+    const tp = spawn('/bin/zsh', ['-i', '-l'], {
+      cwd: spawnCwd,
+      env,
+      // pty: true creates a real pseudo-terminal (Electron-specific)
+      pty: true,
+    } as any)
+    termProcess = tp
+
+    tp.on('error', (err: Error) => {
+      console.error('[terminal] spawn error:', err)
+    })
+
+    tp.on('exit', (code: number | null) => {
+      const win = BrowserWindow.getAllWindows().find(w => !w.isDestroyed())
+      if (win && !win.webContents.isDestroyed()) {
+        win.webContents.send('pty:exit', code ?? 0)
+      }
+      termProcess = null
+    })
+
+    tp.on('spawn', () => {
+      console.log('[terminal] PTY spawned successfully, pid:', tp.pid)
+    })
+
+    // Handle PTY output — data from stdout is PTY master output
+    if (tp.stdout) {
+      tp.stdout.on('data', (data: Buffer) => {
+        const win = BrowserWindow.getAllWindows().find(w => !w.isDestroyed())
+        if (win && !win.webContents.isDestroyed()) {
+          win.webContents.send('pty:data', data.toString())
+        }
+      })
+    }
+
+    if (tp.stderr) {
+      tp.stderr.on('data', (data: Buffer) => {
+        console.error('[terminal] stderr:', data.toString())
+      })
+    }
+  } catch (e) {
+    console.error('[terminal] Failed to spawn:', e)
+    throw e
+  }
+})
+
+ipcMain.handle('pty-write', (_, data: string) => {
+  if (termProcess?.stdin?.writable) {
+    termProcess.stdin.write(data)
+  }
+})
+
+ipcMain.handle('pty-resize', () => {})
+
+ipcMain.handle('pty-kill', () => {
+  if (termProcess) {
+    try { termProcess.kill() } catch { /* ignore */ }
+    termProcess = null
+  }
+})

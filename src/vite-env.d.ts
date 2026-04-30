@@ -21,5 +21,12 @@ interface Window {
     onMenuOpenFolder: (fn: (path: string) => void) => () => void
     onMenuOpenFile:   (fn: (path: string) => void) => () => void
     onMenuFind:       (fn: () => void) => () => void
+    // PTY (Terminal)
+    ptySpawn:  (cwd?: string, cols?: number, rows?: number) => Promise<void>
+    ptyWrite:  (data: string) => Promise<void>
+    ptyResize: (cols: number, rows: number) => Promise<void>
+    ptyKill:   () => Promise<void>
+    onPtyData: (fn: (data: string) => void) => () => void
+    onPtyExit: (fn: (exitCode: number) => void) => () => void
   }
 }

@@ -5,6 +5,9 @@ import rehypeHighlight from 'rehype-highlight'
 import hljs from 'highlight.js'
 import 'highlight.js/styles/github-dark.css'
 
+// Counter for generating unique heading IDs
+let headingCounter = 0
+
 interface MarkdownViewerProps {
   content: string
   mode: 'preview' | 'markdown'
@@ -135,6 +138,11 @@ export default function MarkdownViewer({ content, mode, currentFilePath, onFileL
   const isMd = isMarkdownFile(currentFilePath)
   const containerRef = useRef<HTMLDivElement>(null)
 
+  // Reset heading counter when content changes
+  useEffect(() => {
+    headingCounter = 0
+  }, [content])
+
   // Scroll to top when content changes
   useEffect(() => {
     const container = document.getElementById('viewer-container')
@@ -143,30 +151,50 @@ export default function MarkdownViewer({ content, mode, currentFilePath, onFileL
     }
   }, [content])
 
+  // Refs to avoid stale closures in effects
+  const searchKeywordRef = useRef(searchKeyword)
+  const currentMatchIndexRef = useRef(currentMatchIndex)
+  const onMatchCountChangeRef = useRef(onMatchCountChange)
+  searchKeywordRef.current = searchKeyword
+  currentMatchIndexRef.current = currentMatchIndex
+  onMatchCountChangeRef.current = onMatchCountChange
+
   // Apply search highlights after DOM renders
   const updateHighlights = useCallback(() => {
     const container = containerRef.current
     if (!container) return
 
-    const count = applySearchHighlights(container, searchKeyword || '')
-    if (onMatchCountChange) {
-      onMatchCountChange(count)
+    const count = applySearchHighlights(container, searchKeywordRef.current || '')
+    if (onMatchCountChangeRef.current) {
+      onMatchCountChangeRef.current(count)
     }
 
     // Apply current match highlight
-    if (currentMatchIndex !== undefined && currentMatchIndex >= 0) {
-      scrollToMatch(container, currentMatchIndex)
+    const idx = currentMatchIndexRef.current
+    if (idx !== undefined && idx >= 0) {
+      scrollToMatch(container, idx)
     }
-  }, [searchKeyword, currentMatchIndex, onMatchCountChange])
+  }, [])
 
-  // Re-apply highlights when search keyword or content changes
+  // Re-apply highlights when content or mode changes (not on every search state change)
   useEffect(() => {
-    // Use requestAnimationFrame to ensure DOM has been updated
     const raf = requestAnimationFrame(() => {
       updateHighlights()
     })
     return () => cancelAnimationFrame(raf)
-  }, [updateHighlights, content, mode])
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [content, mode])
+
+  // Separate effect for currentMatchIndex changes (scroll only, no re-highlight)
+  useEffect(() => {
+    if (currentMatchIndex === undefined || currentMatchIndex < 0) return
+    const container = containerRef.current
+    if (!container) return
+    const raf = requestAnimationFrame(() => {
+      scrollToMatch(container, currentMatchIndex)
+    })
+    return () => cancelAnimationFrame(raf)
+  }, [currentMatchIndex])
 
   const handlePathClick = async (relativePath: string) => {
     if (!currentFilePath) return
@@ -205,6 +233,31 @@ export default function MarkdownViewer({ content, mode, currentFilePath, onFileL
           remarkPlugins={[remarkGfm]}
           rehypePlugins={[rehypeHighlight]}
           components={{
+            // Custom heading renderer with IDs for TOC navigation
+            h1: ({ children }) => {
+              const id = `heading-${headingCounter++}`
+              return <h1 id={id}>{children}</h1>
+            },
+            h2: ({ children }) => {
+              const id = `heading-${headingCounter++}`
+              return <h2 id={id}>{children}</h2>
+            },
+            h3: ({ children }) => {
+              const id = `heading-${headingCounter++}`
+              return <h3 id={id}>{children}</h3>
+            },
+            h4: ({ children }) => {
+              const id = `heading-${headingCounter++}`
+              return <h4 id={id}>{children}</h4>
+            },
+            h5: ({ children }) => {
+              const id = `heading-${headingCounter++}`
+              return <h5 id={id}>{children}</h5>
+            },
+            h6: ({ children }) => {
+              const id = `heading-${headingCounter++}`
+              return <h6 id={id}>{children}</h6>
+            },
             img: ({ src, alt }) => {
               return (
                 <img

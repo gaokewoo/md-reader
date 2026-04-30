@@ -132,3 +132,21 @@
 .hljs {
   @apply bg-transparent;
 }
+
+/* xterm.js terminal overrides */
+.xterm {
+  padding: 4px 0;
+}
+
+.xterm-viewport::-webkit-scrollbar {
+  width: 8px;
+}
+
+.xterm-viewport::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.2);
+  border-radius: 4px;
+}
+
+.xterm-viewport::-webkit-scrollbar-track {
+  background: transparent;
+}

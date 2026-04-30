@@ -23,4 +23,20 @@ contextBridge.exposeInMainWorld('electronAPI', {
     ipcRenderer.on('menu:find', handler)
     return () => { ipcRenderer.removeListener('menu:find', handler) }
   },
+
+  // PTY (Terminal) IPC
+  ptySpawn: (cwd?: string, cols?: number, rows?: number) => ipcRenderer.invoke('pty-spawn', cwd, cols, rows),
+  ptyWrite: (data: string) => ipcRenderer.invoke('pty-write', data),
+  ptyResize: (cols: number, rows: number) => ipcRenderer.invoke('pty-resize', cols, rows),
+  ptyKill: () => ipcRenderer.invoke('pty-kill'),
+  onPtyData: (fn: (data: string) => void) => {
+    const handler = (_e: Electron.IpcRendererEvent, data: string) => fn(data)
+    ipcRenderer.on('pty:data', handler)
+    return () => { ipcRenderer.removeListener('pty:data', handler) }
+  },
+  onPtyExit: (fn: (exitCode: number) => void) => {
+    const handler = (_e: Electron.IpcRendererEvent, exitCode: number) => fn(exitCode)
+    ipcRenderer.on('pty:exit', handler)
+    return () => { ipcRenderer.removeListener('pty:exit', handler) }
+  },
 })
