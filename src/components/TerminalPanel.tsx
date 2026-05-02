@@ -20,7 +20,13 @@ export default function TerminalPanel({ visible, cwd }: TerminalPanelProps) {
     // If terminal already exists, just fit and return
     if (terminalRef.current) {
       const timer = setTimeout(() => {
-        try { fitAddonRef.current?.fit() } catch { /* ignore */ }
+        try {
+          fitAddonRef.current?.fit()
+          const term = terminalRef.current
+          if (term) {
+            window.electronAPI.ptyResize(term.cols, term.rows)
+          }
+        } catch { /* ignore */ }
       }, 50)
       return () => clearTimeout(timer)
     }
@@ -79,7 +85,7 @@ export default function TerminalPanel({ visible, cwd }: TerminalPanelProps) {
       window.electronAPI.ptyKill()
       // Dispose terminal
       if (terminalRef.current) {
-        terminalRef.current.dispose()
+        try { terminalRef.current.dispose() } catch { /* ignore */ }
         terminalRef.current = null
         fitAddonRef.current = null
       }

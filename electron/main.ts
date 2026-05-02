@@ -1,7 +1,7 @@
 import { app, BrowserWindow, dialog, ipcMain, Menu, shell } from 'electron'
 import path from 'path'
 import fs from 'fs'
-import { spawn, ChildProcess } from 'child_process'
+import * as pty from 'node-pty'
 
 let mainWindow: BrowserWindow | null = null
 
@@ -25,7 +25,14 @@ function createWindow() {
     mainWindow.loadFile(path.join(__dirname, '../../dist/index.html'))
   }
 
-  mainWindow.on('closed', () => { mainWindow = null })
+  mainWindow.on('closed', () => {
+    mainWindow = null
+    // Ensure PTY is killed when window closes
+    if (termProcess) {
+      try { termProcess.kill() } catch { /* ignore */ }
+      termProcess = null
+    }
+  })
 
   // Handle external links (open in default browser)
   mainWindow.webContents.setWindowOpenHandler(({ url }) => {
@@ -189,7 +196,16 @@ app.whenReady().then(() => {
   buildMenu()
   app.on('activate', () => { if (BrowserWindow.getAllWindows().length === 0) createWindow() })
 })
-app.on('window-all-closed', () => { if (process.platform !== 'darwin') app.quit() })
+
+// Always quit when window is closed (single-window app)
+app.on('window-all-closed', () => {
+  // Kill any remaining PTY process before quitting
+  if (termProcess) {
+    try { termProcess.kill() } catch { /* ignore */ }
+    termProcess = null
+  }
+  app.quit()
+})
 
 // ---- IPC handlers (same ones the toolbar buttons use) ----
 
@@ -359,13 +375,10 @@ function scanDir(dir: string): FNode[] {
   return out
 }
 
-// ---- Terminal (using Electron's built-in PTY support) ----
-// Electron's child_process.spawn supports `pty: true` option since Electron 28+
-// This creates a real pseudo-terminal, solving all pipe-buffering issues.
+// ---- Terminal (using node-pty) ----
+let termProcess: pty.IPty | null = null
 
-let termProcess: ChildProcess | null = null
-
-ipcMain.handle('pty-spawn', (_, cwd?: string, _cols?: number, _rows?: number) => {
+ipcMain.handle('pty-spawn', (_, cwd?: string, cols?: number, rows?: number) => {
   if (termProcess) {
     try { termProcess.kill() } catch { /* ignore */ }
     termProcess = null
@@ -389,48 +402,31 @@ ipcMain.handle('pty-spawn', (_, cwd?: string, _cols?: number, _rows?: number) =>
   }
 
   try {
-    // Use Electron's built-in PTY support: pty: true creates a real pseudo-terminal
-    // zsh will see a real TTY → proper line buffering, prompt display, etc.
-    // TypeScript doesn't know about pty option, so we cast options
-    const tp = spawn('/bin/zsh', ['-i', '-l'], {
+    const tp = pty.spawn('/bin/zsh', ['-i', '-l'], {
       cwd: spawnCwd,
       env,
-      // pty: true creates a real pseudo-terminal (Electron-specific)
-      pty: true,
-    } as any)
+      cols: cols || 80,
+      rows: rows || 24,
+    })
     termProcess = tp
 
-    tp.on('error', (err: Error) => {
-      console.error('[terminal] spawn error:', err)
+    // Store the window reference at spawn time so we don't look it up on every data event
+    const targetWin = BrowserWindow.getAllWindows().find(w => !w.isDestroyed())
+
+    tp.onData((data: string) => {
+      if (targetWin && !targetWin.isDestroyed() && !targetWin.webContents.isDestroyed()) {
+        targetWin.webContents.send('pty:data', data)
+      }
     })
 
-    tp.on('exit', (code: number | null) => {
-      const win = BrowserWindow.getAllWindows().find(w => !w.isDestroyed())
-      if (win && !win.webContents.isDestroyed()) {
-        win.webContents.send('pty:exit', code ?? 0)
+    tp.onExit(({ exitCode }) => {
+      if (targetWin && !targetWin.isDestroyed() && !targetWin.webContents.isDestroyed()) {
+        targetWin.webContents.send('pty:exit', exitCode ?? 0)
       }
       termProcess = null
     })
 
-    tp.on('spawn', () => {
-      console.log('[terminal] PTY spawned successfully, pid:', tp.pid)
-    })
-
-    // Handle PTY output — data from stdout is PTY master output
-    if (tp.stdout) {
-      tp.stdout.on('data', (data: Buffer) => {
-        const win = BrowserWindow.getAllWindows().find(w => !w.isDestroyed())
-        if (win && !win.webContents.isDestroyed()) {
-          win.webContents.send('pty:data', data.toString())
-        }
-      })
-    }
-
-    if (tp.stderr) {
-      tp.stderr.on('data', (data: Buffer) => {
-        console.error('[terminal] stderr:', data.toString())
-      })
-    }
+    console.log('[terminal] PTY spawned successfully, pid:', tp.pid)
   } catch (e) {
     console.error('[terminal] Failed to spawn:', e)
     throw e
@@ -438,12 +434,16 @@ ipcMain.handle('pty-spawn', (_, cwd?: string, _cols?: number, _rows?: number) =>
 })
 
 ipcMain.handle('pty-write', (_, data: string) => {
-  if (termProcess?.stdin?.writable) {
-    termProcess.stdin.write(data)
+  if (termProcess) {
+    termProcess.write(data)
   }
 })
 
-ipcMain.handle('pty-resize', () => {})
+ipcMain.handle('pty-resize', (_, cols: number, rows: number) => {
+  if (termProcess) {
+    termProcess.resize(cols, rows)
+  }
+})
 
 ipcMain.handle('pty-kill', () => {
   if (termProcess) {

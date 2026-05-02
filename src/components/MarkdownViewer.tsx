@@ -16,6 +16,7 @@ interface MarkdownViewerProps {
   searchKeyword?: string
   currentMatchIndex?: number  // 0-based index into the matches array
   onMatchCountChange?: (count: number) => void
+  initialScrollTop?: number
 }
 
 const FILE_PATH_PATTERN = /[\w][\w\-]*(?:\/[\w\-./]+)*\.\w{1,12}/i
@@ -134,7 +135,7 @@ function scrollToMatch(container: HTMLElement, matchIndex: number) {
   }
 }
 
-export default function MarkdownViewer({ content, mode, currentFilePath, onFileLinkClick, searchKeyword, currentMatchIndex, onMatchCountChange }: MarkdownViewerProps) {
+export default function MarkdownViewer({ content, mode, currentFilePath, onFileLinkClick, searchKeyword, currentMatchIndex, onMatchCountChange, initialScrollTop = 0 }: MarkdownViewerProps) {
   const isMd = isMarkdownFile(currentFilePath)
   const containerRef = useRef<HTMLDivElement>(null)
 
@@ -143,13 +144,13 @@ export default function MarkdownViewer({ content, mode, currentFilePath, onFileL
     headingCounter = 0
   }, [content])
 
-  // Scroll to top when content changes
+  // Restore scroll position when content/mode changes
   useEffect(() => {
     const container = document.getElementById('viewer-container')
     if (container) {
-      container.scrollTop = 0
+      container.scrollTop = initialScrollTop
     }
-  }, [content])
+  }, [content, mode, initialScrollTop])
 
   // Refs to avoid stale closures in effects
   const searchKeywordRef = useRef(searchKeyword)

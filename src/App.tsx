@@ -13,6 +13,7 @@ interface TabInfo {
   name: string
   content: string
   viewMode: ViewMode
+  scrollTop: number
 }
 
 interface Workspace {
@@ -67,6 +68,9 @@ export default function App() {
 
   const workspacesRef = useRef<Workspace[]>([])
   workspacesRef.current = workspaces
+
+  const tabsRef = useRef<TabInfo[]>([])
+  tabsRef.current = tabs
 
   const isDragging = useRef(false)
 
@@ -124,6 +128,35 @@ export default function App() {
     setCurrentMatchIndex(searchKeyword ? 0 : -1)
   }, [activeTabPath, searchKeyword])
 
+  // Save/Restore scroll position when switching tabs
+  const prevActiveTabPathRef = useRef<string | null>(null)
+  useEffect(() => {
+    const prevPath = prevActiveTabPathRef.current
+    prevActiveTabPathRef.current = activeTabPath
+
+    // Save scroll position of the previous tab
+    if (prevPath) {
+      const container = document.getElementById('viewer-container')
+      if (container) {
+        const scrollTop = container.scrollTop
+        setTabs(prev => prev.map(t => t.path === prevPath ? { ...t, scrollTop } : t))
+      }
+    }
+
+    // Restore scroll position of the new tab (after DOM renders)
+    if (activeTabPath) {
+      const targetTab = tabsRef.current.find(t => t.path === activeTabPath)
+      if (targetTab && targetTab.scrollTop > 0) {
+        requestAnimationFrame(() => {
+          const container = document.getElementById('viewer-container')
+          if (container) {
+            container.scrollTop = targetTab.scrollTop
+          }
+        })
+      }
+    }
+  }, [activeTabPath])
+
   // ---- Add/remove workspace ----
 
   const addWorkspace = useCallback(async (dir: string) => {
@@ -169,7 +202,7 @@ export default function App() {
       if (r.ok && r.content !== undefined) {
         const name = filePath.split('/').pop() || filePath
         const defaultMode = isMarkdownFile(filePath) ? 'preview' : 'markdown'
-        const newTab: TabInfo = { path: filePath, name, content: r.content, viewMode: defaultMode }
+        const newTab: TabInfo = { path: filePath, name, content: r.content, viewMode: defaultMode, scrollTop: 0 }
         setTabs(prev => [...prev, newTab])
         setActiveTabPath(filePath)
       } else {
@@ -537,6 +570,7 @@ export default function App() {
                         searchKeyword={searchKeyword}
                         currentMatchIndex={currentMatchIndex}
                         onMatchCountChange={handleMatchCountChange}
+                        initialScrollTop={activeTab.scrollTop}
                       />
                     )}
                   </div>
