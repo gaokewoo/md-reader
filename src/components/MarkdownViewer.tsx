@@ -17,6 +17,7 @@ interface MarkdownViewerProps {
   currentMatchIndex?: number  // 0-based index into the matches array
   onMatchCountChange?: (count: number) => void
   initialScrollTop?: number
+  bgTheme?: 'white' | 'dark' | 'eye-care'
 }
 
 const FILE_PATH_PATTERN = /[\w][\w\-]*(?:\/[\w\-./]+)*\.\w{1,12}/i
@@ -135,9 +136,12 @@ function scrollToMatch(container: HTMLElement, matchIndex: number) {
   }
 }
 
-export default function MarkdownViewer({ content, mode, currentFilePath, onFileLinkClick, searchKeyword, currentMatchIndex, onMatchCountChange, initialScrollTop = 0 }: MarkdownViewerProps) {
+export default function MarkdownViewer({ content, mode, currentFilePath, onFileLinkClick, searchKeyword, currentMatchIndex, onMatchCountChange, initialScrollTop = 0, bgTheme = 'white' }: MarkdownViewerProps) {
   const isMd = isMarkdownFile(currentFilePath)
   const containerRef = useRef<HTMLDivElement>(null)
+
+  const themeBg = bgTheme === 'dark' ? 'bg-gray-900' : bgTheme === 'eye-care' ? 'bg-[#c7edcc]' : 'bg-white'
+  const themeText = bgTheme === 'dark' ? 'text-gray-100' : 'text-gray-800'
 
   // Reset heading counter when content changes
   useEffect(() => {
@@ -208,8 +212,8 @@ export default function MarkdownViewer({ content, mode, currentFilePath, onFileL
   // For non-markdown files, show plain text with syntax highlighting
   if (!isMd) {
     return (
-      <div id="viewer-container" ref={containerRef} className="h-full overflow-auto bg-gray-900">
-        <SourceCodeContent content={content} filePath={currentFilePath} />
+      <div id="viewer-container" ref={containerRef} className={`h-full overflow-auto ${themeBg} ${themeText}`}>
+        <SourceCodeContent content={content} filePath={currentFilePath} bgTheme={bgTheme} />
       </div>
     )
   }
@@ -217,8 +221,8 @@ export default function MarkdownViewer({ content, mode, currentFilePath, onFileL
   // Markdown raw text mode
   if (mode === 'markdown') {
     return (
-      <div id="viewer-container" ref={containerRef} className="h-full overflow-auto bg-gray-50">
-        <pre className="p-6 text-sm font-mono leading-relaxed text-gray-800 whitespace-pre-wrap break-words">
+      <div id="viewer-container" ref={containerRef} className={`h-full overflow-auto ${themeBg} ${themeText}`}>
+        <pre className={`p-6 text-sm font-mono leading-relaxed whitespace-pre-wrap break-words ${themeText}`}>
           {content}
         </pre>
       </div>
@@ -227,7 +231,7 @@ export default function MarkdownViewer({ content, mode, currentFilePath, onFileL
 
   // Markdown preview mode
   return (
-    <div id="viewer-container" ref={containerRef} className="h-full overflow-auto bg-white">
+    <div id="viewer-container" ref={containerRef} className={`h-full overflow-auto ${themeBg}`}>
       <div className="max-w-4xl mx-auto p-8">
         <ReactMarkdown
           className="markdown-body"
@@ -330,7 +334,7 @@ export default function MarkdownViewer({ content, mode, currentFilePath, onFileL
 }
 
 // Source code content with syntax highlighting (rendered as HTML, search highlights applied via DOM)
-function SourceCodeContent({ content, filePath }: { content: string; filePath: string | null }) {
+function SourceCodeContent({ content, filePath, bgTheme = 'white' }: { content: string; filePath: string | null; bgTheme?: 'white' | 'dark' | 'eye-care' }) {
   const language = getLanguageFromPath(filePath)
 
   const highlightedHtml = useMemo(() => {
@@ -344,8 +348,11 @@ function SourceCodeContent({ content, filePath }: { content: string; filePath: s
     }
   }, [content, language])
 
+  const preBg = bgTheme === 'dark' ? 'bg-gray-800' : bgTheme === 'eye-care' ? 'bg-[#b8dfc0]' : 'bg-gray-50'
+  const textColor = bgTheme === 'dark' ? 'text-gray-100' : 'text-gray-800'
+
   return (
-    <pre className="p-6 text-sm font-mono leading-relaxed overflow-x-auto">
+    <pre className={`p-6 text-sm font-mono leading-relaxed overflow-x-auto ${preBg} ${textColor}`}>
       <code className={`language-${language || 'plaintext'}`} dangerouslySetInnerHTML={{ __html: highlightedHtml }} />
     </pre>
   )

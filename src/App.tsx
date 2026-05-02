@@ -66,6 +66,29 @@ export default function App() {
   const [sidebarWidth, setSidebarWidth] = useState(288)
   const [bottomPanelHeight, setBottomPanelHeight] = useState(220)
 
+  // Background color theme
+  type BgTheme = 'white' | 'dark' | 'eye-care'
+  const [bgTheme, setBgTheme] = useState<BgTheme>(() => {
+    try {
+      return (localStorage.getItem('md-reader-bg-theme') as BgTheme) || 'white'
+    } catch {
+      return 'white'
+    }
+  })
+  const [showThemeMenu, setShowThemeMenu] = useState(false)
+
+  // Close theme menu when clicking outside
+  useEffect(() => {
+    if (!showThemeMenu) return
+    const handleClick = (e: MouseEvent) => {
+      const target = e.target as HTMLElement
+      if (target.closest('[data-theme-menu]')) return
+      setShowThemeMenu(false)
+    }
+    document.addEventListener('click', handleClick)
+    return () => document.removeEventListener('click', handleClick)
+  }, [showThemeMenu])
+
   const workspacesRef = useRef<Workspace[]>([])
   workspacesRef.current = workspaces
 
@@ -285,6 +308,14 @@ export default function App() {
     }
   }, [addWorkspace])
 
+  const handleThemeChange = useCallback((theme: BgTheme) => {
+    setBgTheme(theme)
+    try {
+      localStorage.setItem('md-reader-bg-theme', theme)
+    } catch { /* ignore */ }
+    setShowThemeMenu(false)
+  }, [])
+
   // ---- File tree / link click ----
 
   const handleTreeSelect = useCallback(async (p: string, type: string) => {
@@ -473,6 +504,40 @@ export default function App() {
           </svg>
           Open Folder
         </button>
+
+        {/* Divider */}
+        <div className="w-px h-5 bg-gray-300 mx-2" />
+
+        {/* Background theme switcher */}
+        <div className="relative" data-theme-menu>
+          <button
+            onClick={(e) => { e.stopPropagation(); setShowThemeMenu(!showThemeMenu) }}
+            className="flex items-center gap-1 px-2 py-1 rounded transition-colors text-xs text-gray-500 hover:text-gray-700 hover:bg-gray-200"
+            title="背景颜色"
+          >
+            <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 21a4 4 0 01-4-4V5a2 2 0 012-2h4a2 2 0 012 2v12a4 4 0 01-4 4zm0 0h12a2 2 0 002-2v-4a2 2 0 00-2-2h-2.343M11 7.343l1.657-1.657a2 2 0 012.828 0l2.829 2.829a2 2 0 010 2.828l-8.486 8.485M7 17h.01" />
+            </svg>
+          </button>
+          {showThemeMenu && (
+            <div className="absolute right-0 top-full mt-1 bg-white border border-gray-200 rounded-md shadow-lg py-1 z-50 w-24" data-theme-menu>
+              {([
+                { key: 'white', label: '白色', class: 'bg-white' },
+                { key: 'dark', label: '黑色', class: 'bg-gray-900' },
+                { key: 'eye-care', label: '护眼', class: 'bg-[#c7edcc]' },
+              ] as { key: BgTheme; label: string; class: string }[]).map((t) => (
+                <button
+                  key={t.key}
+                  onClick={(e) => { e.stopPropagation(); handleThemeChange(t.key) }}
+                  className={`w-full text-left px-3 py-1.5 text-xs hover:bg-gray-100 flex items-center gap-2 ${bgTheme === t.key ? 'text-blue-600 font-medium' : 'text-gray-700'}`}
+                >
+                  <span className={`w-3 h-3 rounded-sm border border-gray-300 ${t.class}`} />
+                  {t.label}
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
       </div>
 
       {/* Main content area */}
@@ -571,6 +636,7 @@ export default function App() {
                         currentMatchIndex={currentMatchIndex}
                         onMatchCountChange={handleMatchCountChange}
                         initialScrollTop={activeTab.scrollTop}
+                        bgTheme={bgTheme}
                       />
                     )}
                   </div>
