@@ -20,9 +20,13 @@ interface MarkdownViewerProps {
   bgTheme?: 'white' | 'dark' | 'eye-care'
 }
 
-const FILE_PATH_PATTERN = /[\w][\w\-]*(?:\/[\w\-./]+)*\.\w{1,12}/i
+const FILE_PATH_PATTERN = /^(\.\/|\.\.\/|[\w\-]+\/|[A-Za-z]:\\|~\/|[\w\-]+\.[\w]+)/
 
 function isMdFilePath(text: string): boolean {
+  // Must contain a dot (file extension) and look like a path
+  if (!text.includes('.')) return false
+  // Reject plain snake_case identifiers like time_range, foo_bar
+  if (/^[a-zA-Z_][a-zA-Z0-9_]*$/.test(text)) return false
   return FILE_PATH_PATTERN.test(text)
 }
 
