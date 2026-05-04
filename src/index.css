@@ -133,6 +133,12 @@
   @apply bg-transparent;
 }
 
+/* Per-tab scroll container styles */
+[data-tab-path] {
+  /* Each tab container is an independent scroll context */
+  will-change: opacity;
+}
+
 /* xterm.js terminal overrides */
 .xterm {
   padding: 4px 0;

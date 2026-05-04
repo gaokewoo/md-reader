@@ -5,6 +5,7 @@ import TabBar from './components/TabBar'
 import SearchBar from './components/SearchBar'
 import TocPanel from './components/TocPanel'
 import TerminalPanel from './components/TerminalPanel'
+import { applySearchHighlights, scrollToMatch } from './utils/searchHighlight'
 
 type ViewMode = 'preview' | 'markdown'
 
@@ -13,7 +14,6 @@ interface TabInfo {
   name: string
   content: string
   viewMode: ViewMode
-  scrollTop: number
 }
 
 interface Workspace {
@@ -151,34 +151,51 @@ export default function App() {
     setCurrentMatchIndex(searchKeyword ? 0 : -1)
   }, [activeTabPath, searchKeyword])
 
-  // Save/Restore scroll position when switching tabs
-  const prevActiveTabPathRef = useRef<string | null>(null)
-  useEffect(() => {
-    const prevPath = prevActiveTabPathRef.current
-    prevActiveTabPathRef.current = activeTabPath
+  // ---- Search highlight application ----
+  // Apply highlights to the ACTIVE tab container after content/mode changes or keyword changes
+  const searchKeywordRef = useRef(searchKeyword)
+  const currentMatchIndexRef = useRef(currentMatchIndex)
+  const onMatchCountChangeRef = useRef(handleMatchCountChange)
+  searchKeywordRef.current = searchKeyword
+  currentMatchIndexRef.current = currentMatchIndex
+  onMatchCountChangeRef.current = handleMatchCountChange
 
-    // Save scroll position of the previous tab
-    if (prevPath) {
-      const container = document.getElementById('viewer-container')
-      if (container) {
-        const scrollTop = container.scrollTop
-        setTabs(prev => prev.map(t => t.path === prevPath ? { ...t, scrollTop } : t))
-      }
+  const applyActiveTabHighlights = useCallback(() => {
+    if (!activeTabPath) return
+    const container = document.querySelector(`[data-tab-path="${CSS.escape(activeTabPath)}"]`) as HTMLElement | null
+    if (!container) return
+
+    const count = applySearchHighlights(container, searchKeywordRef.current || '')
+    if (onMatchCountChangeRef.current) {
+      onMatchCountChangeRef.current(count)
     }
 
-    // Restore scroll position of the new tab (after DOM renders)
-    if (activeTabPath) {
-      const targetTab = tabsRef.current.find(t => t.path === activeTabPath)
-      if (targetTab && targetTab.scrollTop > 0) {
-        requestAnimationFrame(() => {
-          const container = document.getElementById('viewer-container')
-          if (container) {
-            container.scrollTop = targetTab.scrollTop
-          }
-        })
-      }
+    const idx = currentMatchIndexRef.current
+    if (idx !== undefined && idx >= 0) {
+      scrollToMatch(container, idx)
     }
   }, [activeTabPath])
+
+  // Re-apply highlights when active tab content or mode changes
+  useEffect(() => {
+    const raf = requestAnimationFrame(() => {
+      applyActiveTabHighlights()
+    })
+    return () => cancelAnimationFrame(raf)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeTabPath, activeTab?.content, activeTab?.viewMode])
+
+  // Scroll-only effect when currentMatchIndex changes
+  useEffect(() => {
+    if (currentMatchIndex === undefined || currentMatchIndex < 0) return
+    if (!activeTabPath) return
+    const container = document.querySelector(`[data-tab-path="${CSS.escape(activeTabPath)}"]`) as HTMLElement | null
+    if (!container) return
+    const raf = requestAnimationFrame(() => {
+      scrollToMatch(container, currentMatchIndex)
+    })
+    return () => cancelAnimationFrame(raf)
+  }, [currentMatchIndex, activeTabPath])
 
   // ---- Add/remove workspace ----
 
@@ -225,7 +242,7 @@ export default function App() {
       if (r.ok && r.content !== undefined) {
         const name = filePath.split('/').pop() || filePath
         const defaultMode = isMarkdownFile(filePath) ? 'preview' : 'markdown'
-        const newTab: TabInfo = { path: filePath, name, content: r.content, viewMode: defaultMode, scrollTop: 0 }
+        const newTab: TabInfo = { path: filePath, name, content: r.content, viewMode: defaultMode }
         setTabs(prev => [...prev, newTab])
         setActiveTabPath(filePath)
       } else {
@@ -341,13 +358,14 @@ export default function App() {
   // ---- TOC heading click ----
 
   const handleHeadingClick = useCallback((id: string) => {
-    const container = document.getElementById('viewer-container')
+    if (!activeTabPath) return
+    const container = document.querySelector(`[data-tab-path="${CSS.escape(activeTabPath)}"]`) as HTMLElement | null
     if (!container) return
     const el = container.querySelector(`#${CSS.escape(id)}`)
     if (el) {
       el.scrollIntoView({ behavior: 'smooth', block: 'start' })
     }
-  }, [])
+  }, [activeTabPath])
 
   // ---- Panel resize (left sidebar) ----
 
@@ -601,7 +619,7 @@ export default function App() {
           <div className="flex-1 flex overflow-hidden">
             {/* Viewer */}
             <div className="flex-1 flex flex-col bg-white overflow-hidden">
-              {activeTab ? (
+              {tabs.length > 0 ? (
                 <>
                   <TabBar
                     tabs={tabs.map(t => ({ path: t.path, name: t.name }))}
@@ -619,25 +637,39 @@ export default function App() {
                     onPrev={handleSearchPrev}
                     onNext={handleSearchNext}
                   />
-                  <div className="flex-1 overflow-auto">
-                    {loading ? (
-                      <div className="flex items-center justify-center h-full"><div className="w-6 h-6 border-2 border-blue-600 border-t-transparent rounded-full animate-spin" /></div>
-                    ) : error ? (
-                      <div className="flex items-center justify-center h-full p-8">
-                        <p className="text-red-500 text-sm text-center">{error}</p>
+                  {/* Tab content area: each tab has its own persistent scroll container */}
+                  <div className="flex-1 relative overflow-hidden">
+                    {tabs.map((tab) => {
+                      const isActive = tab.path === activeTabPath
+                      return (
+                        <div
+                          key={tab.path}
+                          data-tab-path={tab.path}
+                          className="absolute inset-0 overflow-auto"
+                          style={{
+                            opacity: isActive ? 1 : 0,
+                            pointerEvents: isActive ? 'auto' : 'none',
+                            zIndex: isActive ? 1 : 0,
+                          }}
+                        >
+                          <MarkdownViewer
+                            content={tab.content}
+                            mode={tab.viewMode}
+                            currentFilePath={tab.path}
+                            onFileLinkClick={handleFileLinkClick}
+                            bgTheme={bgTheme}
+                          />
+                        </div>
+                      )
+                    })}
+                    {/* Empty state when no tabs */}
+                    {tabs.length === 0 && (
+                      <div className="absolute inset-0 flex flex-col items-center justify-center text-gray-400">
+                        <svg className="w-16 h-16 mb-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                        </svg>
+                        <p>Select a file to start reading</p>
                       </div>
-                    ) : (
-                      <MarkdownViewer
-                        content={activeTab.content}
-                        mode={activeTab.viewMode}
-                        currentFilePath={activeTab.path}
-                        onFileLinkClick={handleFileLinkClick}
-                        searchKeyword={searchKeyword}
-                        currentMatchIndex={currentMatchIndex}
-                        onMatchCountChange={handleMatchCountChange}
-                        initialScrollTop={activeTab.scrollTop}
-                        bgTheme={bgTheme}
-                      />
                     )}
                   </div>
                 </>
