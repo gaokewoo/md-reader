@@ -378,39 +378,94 @@ function scanDir(dir: string): FNode[] {
 // ---- Terminal (using node-pty) ----
 let termProcess: pty.IPty | null = null
 
-ipcMain.handle('pty-spawn', (_, cwd?: string, cols?: number, rows?: number) => {
+/** Safely kill existing PTY process */
+function killExistingPty() {
   if (termProcess) {
-    try { termProcess.kill() } catch { /* ignore */ }
+    try {
+      termProcess.kill()
+      console.log(`[terminal] PTY killed, pid was: ${termProcess.pid}`)
+    } catch (e) {
+      console.warn('[terminal] Error killing PTY:', e)
+    }
     termProcess = null
   }
+}
 
-  const env: Record<string, string> = {}
-  for (const [key, value] of Object.entries(process.env)) {
-    if (typeof value === 'string') {
-      env[key] = value
-    }
+/** Find an available shell binary */
+function findShell(): string {
+  // Try user's preferred shell first
+  if (process.env.SHELL) {
+    try {
+      if (fs.existsSync(process.env.SHELL) && fs.statSync(process.env.SHELL).isFile()) {
+        return process.env.SHELL
+      }
+    } catch { /* ignore */ }
   }
-  env['TERM'] = 'xterm-256color'
+  // Fallback shells in order of preference
+  const shells = ['/bin/zsh', '/bin/bash', '/bin/sh']
+  for (const s of shells) {
+    try {
+      if (fs.existsSync(s) && fs.statSync(s).isFile()) {
+        return s
+      }
+    } catch { /* ignore */ }
+  }
+  return '/bin/sh'
+}
 
+ipcMain.handle('pty-spawn', (_, cwd?: string, cols?: number, rows?: number) => {
+  // Kill any existing PTY before spawning a new one
+  killExistingPty()
+
+  // Build a clean environment for the child process
+  // Only include essential variables to avoid posix_spawnp failures in packaged apps
+  const env: Record<string, string> = {
+    PATH: process.env.PATH || '/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin',
+    HOME: process.env.HOME || app.getPath('home'),
+    USER: process.env.USER || '',
+    SHELL: process.env.SHELL || '/bin/zsh',
+    TERM: 'xterm-256color',
+    COLORTERM: 'truecolor',
+    LANG: process.env.LANG || 'en_US.UTF-8',
+  }
+  // Include additional env vars that are safe
+  for (const [key, value] of Object.entries(process.env)) {
+    if (typeof value !== 'string' || value.length === 0) continue
+    if (key in env) continue // Don't overwrite our values
+    if (key.startsWith('ELECTRON_') || key.startsWith('NODE_') || key.startsWith('npm_')) continue
+    if (key.startsWith('DYLD_') || key.startsWith('LD_')) continue // Skip dynamic linker vars
+    env[key] = value
+  }
+
+  // Validate CWD
   let spawnCwd = cwd || app.getPath('home')
   try {
-    if (!fs.statSync(spawnCwd).isDirectory()) {
+    const stat = fs.statSync(spawnCwd)
+    if (!stat.isDirectory()) {
+      console.warn('[terminal] CWD is not a directory, falling back to home:', spawnCwd)
       spawnCwd = app.getPath('home')
     }
   } catch {
+    console.warn('[terminal] CWD does not exist, falling back to home:', spawnCwd)
     spawnCwd = app.getPath('home')
   }
 
+  const shell = findShell()
+  const finalCols = cols || 80
+  const finalRows = rows || 24
+
+  console.log(`[terminal] Spawning PTY: ${shell} in ${spawnCwd} (${finalCols}x${finalRows})`)
+
   try {
-    const tp = pty.spawn('/bin/zsh', ['-i', '-l'], {
+    const tp = pty.spawn(shell, ['-i', '-l'], {
       cwd: spawnCwd,
       env,
-      cols: cols || 80,
-      rows: rows || 24,
+      cols: finalCols,
+      rows: finalRows,
     })
     termProcess = tp
 
-    // Store the window reference at spawn time so we don't look it up on every data event
+    // Store the window reference at spawn time
     const targetWin = BrowserWindow.getAllWindows().find(w => !w.isDestroyed())
 
     tp.onData((data: string) => {
@@ -420,16 +475,54 @@ ipcMain.handle('pty-spawn', (_, cwd?: string, cols?: number, rows?: number) => {
     })
 
     tp.onExit(({ exitCode }) => {
-      if (targetWin && !targetWin.isDestroyed() && !targetWin.webContents.isDestroyed()) {
-        targetWin.webContents.send('pty:exit', exitCode ?? 0)
+      console.log(`[terminal] PTY exited with code: ${exitCode}, pid was: ${tp.pid}`)
+      if (termProcess === tp) {
+        if (targetWin && !targetWin.isDestroyed() && !targetWin.webContents.isDestroyed()) {
+          targetWin.webContents.send('pty:exit', exitCode ?? 0)
+        }
+        termProcess = null
       }
-      termProcess = null
     })
 
     console.log('[terminal] PTY spawned successfully, pid:', tp.pid)
+    return { ok: true, pid: tp.pid }
   } catch (e) {
-    console.error('[terminal] Failed to spawn:', e)
-    throw e
+    const err = e as Error
+    console.error('[terminal] Failed to spawn PTY:', err.message)
+    console.error('[terminal] Shell:', shell, 'CWD:', spawnCwd, 'Size:', finalCols + 'x' + finalRows)
+
+    // Try a simpler fallback: spawn without login shell flags
+    try {
+      console.log('[terminal] Trying fallback: spawn without -i -l flags...')
+      const tp = pty.spawn(shell, [], {
+        cwd: spawnCwd,
+        env,
+        cols: finalCols,
+        rows: finalRows,
+      })
+      termProcess = tp
+
+      const targetWin = BrowserWindow.getAllWindows().find(w => !w.isDestroyed())
+      tp.onData((data: string) => {
+        if (targetWin && !targetWin.isDestroyed() && !targetWin.webContents.isDestroyed()) {
+          targetWin.webContents.send('pty:data', data)
+        }
+      })
+      tp.onExit(({ exitCode }) => {
+        if (termProcess === tp) {
+          if (targetWin && !targetWin.isDestroyed() && !targetWin.webContents.isDestroyed()) {
+            targetWin.webContents.send('pty:exit', exitCode ?? 0)
+          }
+          termProcess = null
+        }
+      })
+
+      console.log('[terminal] Fallback PTY spawned successfully, pid:', tp.pid)
+      return { ok: true, pid: tp.pid }
+    } catch (e2) {
+      console.error('[terminal] Fallback also failed:', (e2 as Error).message)
+      throw e
+    }
   }
 })
 
@@ -441,13 +534,14 @@ ipcMain.handle('pty-write', (_, data: string) => {
 
 ipcMain.handle('pty-resize', (_, cols: number, rows: number) => {
   if (termProcess) {
-    termProcess.resize(cols, rows)
+    try {
+      termProcess.resize(cols, rows)
+    } catch (e) {
+      console.warn('[terminal] Failed to resize PTY:', e)
+    }
   }
 })
 
 ipcMain.handle('pty-kill', () => {
-  if (termProcess) {
-    try { termProcess.kill() } catch { /* ignore */ }
-    termProcess = null
-  }
+  killExistingPty()
 })

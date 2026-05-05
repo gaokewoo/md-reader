@@ -66,6 +66,10 @@ export default function App() {
   const [sidebarWidth, setSidebarWidth] = useState(288)
   const [bottomPanelHeight, setBottomPanelHeight] = useState(220)
 
+  // Track if bottom panel has ever been opened — once true, keep TerminalPanel mounted
+  // This ensures xterm.js is never created in a display:none container (which causes cols=2)
+  const [bottomPanelEverOpened, setBottomPanelEverOpened] = useState(false)
+
   // Background color theme
   type BgTheme = 'white' | 'dark' | 'eye-care'
   const [bgTheme, setBgTheme] = useState<BgTheme>(() => {
@@ -423,9 +427,18 @@ export default function App() {
     document.addEventListener('mouseup', handleMouseUp)
   }, [bottomPanelHeight])
 
-  // ---- Get terminal CWD from first workspace ----
+  // ---- Get terminal CWD: prefer the workspace of the active tab ----
 
-  const terminalCwd = workspaces.length > 0 ? workspaces[0].path : undefined
+  const terminalCwd = (() => {
+    if (workspaces.length === 0) return undefined
+    // If there's an active tab, find which workspace contains it
+    if (activeTabPath) {
+      const ws = workspaces.find(w => isFileInWorkspace(activeTabPath, w.path))
+      if (ws) return ws.path
+    }
+    // Fall back to first workspace
+    return workspaces[0].path
+  })()
 
   return (
     <div className="h-screen flex flex-col bg-white">
@@ -456,7 +469,11 @@ export default function App() {
           </button>
           {/* Bottom panel toggle — bottom panel open */}
           <button
-            onClick={() => setBottomPanelVisible(!bottomPanelVisible)}
+            onClick={() => {
+              const newVal = !bottomPanelVisible
+              setBottomPanelVisible(newVal)
+              if (newVal) setBottomPanelEverOpened(true)
+            }}
             className={`p-1 rounded transition-colors ${bottomPanelVisible ? 'text-blue-600 bg-blue-50' : 'text-gray-500 hover:text-gray-700 hover:bg-gray-200'}`}
             title="切换底部面板"
           >
@@ -693,23 +710,34 @@ export default function App() {
             )}
           </div>
 
-          {/* Bottom panel resize handle */}
-          {bottomPanelVisible && (
-            <div
-              className="h-1 shrink-0 cursor-row-resize hover:bg-blue-400 active:bg-blue-500 transition-colors relative"
-              onMouseDown={handleBottomResizeStart}
-            >
-              <div className="absolute inset-x-0 -top-1 -bottom-1" />
-            </div>
-          )}
+          {/* Bottom panel resize handle (always rendered, CSS controls visibility) */}
+          <div
+            className="shrink-0 cursor-row-resize hover:bg-blue-400 active:bg-blue-500 transition-colors relative"
+            style={{
+              height: bottomPanelVisible ? 4 : 0,
+              overflow: 'hidden',
+              opacity: bottomPanelVisible ? 1 : 0,
+              pointerEvents: bottomPanelVisible ? 'auto' : 'none',
+            }}
+            onMouseDown={handleBottomResizeStart}
+          >
+            <div className="absolute inset-x-0 -top-1 -bottom-1" />
+          </div>
 
-          {/* Bottom terminal panel */}
-          {bottomPanelVisible && (
+          {/* Bottom terminal panel — only mounted after first open, then preserved via CSS visibility */}
+          {bottomPanelEverOpened && (
             <div
-              className="shrink-0 border-t border-gray-300 bg-[#1e1e1e]"
-              style={{ height: bottomPanelHeight }}
+              className="border-t border-gray-300 bg-[#1e1e1e] flex-shrink-0 overflow-hidden"
+              style={{
+                height: bottomPanelVisible ? bottomPanelHeight : 0,
+                minHeight: 0,
+                // Use visibility:hidden instead of display:none when hidden
+                // This keeps the DOM layout active so xterm.js retains correct dimensions
+                visibility: bottomPanelVisible ? 'visible' : 'hidden',
+                // Collapse to 0 height when hidden so it doesn't take space
+              }}
             >
-              <TerminalPanel visible={true} cwd={terminalCwd} />
+              <TerminalPanel visible={bottomPanelVisible} cwd={terminalCwd} />
             </div>
           )}
         </div>
